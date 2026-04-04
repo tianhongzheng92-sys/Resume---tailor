@@ -64,6 +64,7 @@
     "tailorResume": "Tailor for Job",
     "selectModule": "Select Module",
     "masterResume": "Master Resume",
+    "addMasterResume": "Add Master Resume",
     "tailoredResume": "Tailored Resume",
     "initializeMasterResume": "Initialize Master Resume",
     "initializeSequence": "Initialize Sequence",
@@ -75,6 +76,23 @@
     "retrySuccess": "Processing succeeded!",
     "retryFailed": "Retry failed. Try uploading a different file.",
     "createResume": "Create Resume",
+    "createdResumesHistory": "Created Resumes History",
+    "tailoredResumesHistory": "Tailored Resumes (History)",
+    "filterJobTitle": "Job Title",
+    "filterJobTitlePlaceholder": "Search job title...",
+    "filterCompany": "Company",
+    "filterCompanyPlaceholder": "Search company...",
+    "filterDateFrom": "Created From",
+    "filterDateTo": "Created To",
+    "filterMasterResume": "Master Resume",
+    "filterAllMasters": "All",
+    "tableNo": "No.",
+    "tableMasterResume": "Master Resume",
+    "tableJobTitle": "Job Title",
+    "tableCompany": "Company",
+    "tableCreatedDate": "Created Date",
+    "noTailoredResumes": "No tailored resumes yet.",
+    "noMatchingResumes": "No resumes match the filters.",
     "edited": "Edited {date}",
     "statusLine": "STATUS: {status}",
     "status": {
@@ -500,6 +518,8 @@
     "selectResume": "Select Resume",
     "pasteJobDescription": "Paste Job Description",
     "pasteJobDescriptionBelow": "Paste Job Description Below",
+    "masterResumeLabel": "Master resume",
+    "masterResumeDescription": "Choose which master resume to tailor from.",
     "jobDescriptionPlaceholder": "Paste the job description here...",
     "promptLabel": "Tailoring intensity",
     "promptDescription": "Choose how strongly to align your resume to the job description.",
@@ -515,6 +535,10 @@
       "full": {
         "label": "Full tailor",
         "description": "Comprehensive tailoring using the job description."
+      },
+      "other": {
+        "label": "Deep JD align",
+        "description": "Heavy experience rewrites toward the JD; unique verbs; grounded in your resume only."
       }
     },
     "analyzeJob": "Analyze Job",
@@ -558,6 +582,26 @@
       "title": "Unable to calculate changes",
       "description": "We could not compute a diff for this resume. This can happen with legacy resumes that lack structured data. You can continue to save the tailored resume or cancel to review later.",
       "confirmLabel": "Continue without diff"
+    },
+    "duplicateDialog": {
+      "title": "Similar tailored resume exists",
+      "description": "A tailored resume with the same job description and master resume already exists. Job Title: {jobTitle} | Company: {company} | Created: {createdAt}. Continue anyway?",
+      "continueLabel": "Continue"
+    },
+    "jdCompare": {
+      "title": "Same role vs past applications",
+      "hint": "Only lists past tailored resumes whose job title and company match what you pasted. Use a line like “Senior Engineer @ Acme” or labeled Title / Company fields. Keyword stats compare your pasted JD to the saved posting when available.",
+      "comparingAs": "Matching as: {title} @ {company}",
+      "pasteMore": "Paste at least 30 characters to see matches.",
+      "loading": "Loading saved job descriptions…",
+      "noMatchingRole": "No past tailored resume matches this job title and company. Check spelling, or add an explicit title and company to your paste.",
+      "noSavedJdFootnote": "Some entries have no saved job text (older data); title/company still matched from the resume name.",
+      "keywordsUnavailable": "Keyword overlap: — (no saved JD)",
+      "rowCreated": "Created",
+      "roleMatchBadge": "Title & company match",
+      "matchRate": "Keywords",
+      "matchedOfTotal": "{matched} / {total} keywords",
+      "jaccard": "Similarity (Jaccard): {percent}%"
     },
     "errors": {
       "jobDescriptionTooShort": "Job description is too short. Please provide more details.",

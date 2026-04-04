@@ -515,6 +515,10 @@
       "full": {
         "label": "Personalização completa",
         "description": "Personalização abrangente usando a descrição da vaga."
+      },
+      "other": {
+        "label": "Alinhamento profundo à vaga",
+        "description": "Reescrita forte da experiência à vaga; verbos variados; apenas fatos do currículo."
       }
     },
     "analyzeJob": "Analisar Vaga",

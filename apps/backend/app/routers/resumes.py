@@ -35,6 +35,8 @@ from app.schemas import (
     ResumeListResponse,
     ResumeSummary,
     ResumeUploadResponse,
+    TailoredJobDescriptionsByParentResponse,
+    TailoredResumeJobDescription,
     RawResume,
     UpdateCoverLetterRequest,
     UpdateOutreachMessageRequest,
@@ -657,6 +659,7 @@ async def get_resume(resume_id: str = Query(...)) -> ResumeFetchResponse:
             outreach_message=resume.get("outreach_message"),
             parent_id=resume.get("parent_id"),
             title=resume.get("title"),
+            is_master=resume.get("is_master", False),
         ),
     )
 
@@ -685,6 +688,59 @@ async def list_resumes(include_master: bool = Query(False)) -> ResumeListRespons
     ]
 
     return ResumeListResponse(request_id=str(uuid4()), data=summaries)
+
+
+@router.get(
+    "/job-descriptions/by-parent",
+    response_model=TailoredJobDescriptionsByParentResponse,
+)
+async def list_job_descriptions_by_parent(
+    parent_id: str = Query(..., description="Master resume ID"),
+) -> TailoredJobDescriptionsByParentResponse:
+    """Return stored job descriptions for every tailored resume under this master.
+
+    One round trip replaces N calls to ``GET /resumes/{id}/job-description``.
+    """
+    master = db.get_resume(parent_id)
+    if not master:
+        raise HTTPException(status_code=404, detail="Resume not found")
+    if not master.get("is_master"):
+        raise HTTPException(
+            status_code=400,
+            detail="parent_id must be a master resume ID",
+        )
+
+    resumes = db.list_resumes()
+    tailored = [
+        r
+        for r in resumes
+        if not r.get("is_master", False) and r.get("parent_id") == parent_id
+    ]
+
+    items: list[TailoredResumeJobDescription] = []
+    for resume in tailored:
+        rid = resume["resume_id"]
+        improvement = db.get_improvement_by_tailored_resume(rid)
+        if not improvement:
+            items.append(TailoredResumeJobDescription(resume_id=rid, job_id="", content=""))
+            continue
+        job_id = improvement.get("job_id") or ""
+        job = db.get_job(job_id) if job_id else None
+        if not job:
+            items.append(
+                TailoredResumeJobDescription(resume_id=rid, job_id=job_id, content="")
+            )
+            continue
+        content = job.get("content", "") if isinstance(job.get("content"), str) else ""
+        items.append(
+            TailoredResumeJobDescription(
+                resume_id=rid, job_id=job.get("job_id", job_id), content=content
+            )
+        )
+
+    return TailoredJobDescriptionsByParentResponse(
+        request_id=str(uuid4()), data=items,
+    )
 
 
 @router.post("/improve/preview", response_model=ImproveResumeResponse)
@@ -792,17 +848,12 @@ async def _improve_preview_flow(
     improved_data = _protect_custom_sections(original_resume_data, improved_data)
 
     # Multi-pass refinement: keyword injection, AI phrase removal, alignment validation
+    # Use the resume we're tailoring from (request.resume_id) as the source of truth
     refinement_stats: RefinementStats | None = None
     refinement_attempted = False
     refinement_successful = False
     try:
-        # Get master resume for alignment validation
-        master_resume = db.get_master_resume()
-        master_data = (
-            _get_original_resume_data(master_resume)
-            if master_resume
-            else _get_original_resume_data(resume)
-        )
+        master_data = _get_original_resume_data(resume)
         if master_data:
             initial_match = calculate_keyword_match(improved_data, job_keywords)
             refinement_attempted = True
@@ -1105,17 +1156,12 @@ async def improve_resume_endpoint(
         improved_data = _protect_custom_sections(original_resume_data, improved_data)
 
         # Multi-pass refinement: keyword injection, AI phrase removal, alignment validation
+        # Use the resume we're tailoring from as the source of truth
         refinement_stats: RefinementStats | None = None
         refinement_attempted = False
         refinement_successful = False
         try:
-            # Get master resume for alignment validation
-            master_resume = db.get_master_resume()
-            master_data = (
-                _get_original_resume_data(master_resume)
-                if master_resume
-                else _get_original_resume_data(resume)
-            )
+            master_data = _get_original_resume_data(resume)
             if master_data:
                 initial_match = calculate_keyword_match(improved_data, job_keywords)
                 refinement_attempted = True
@@ -1293,6 +1339,11 @@ async def update_resume_endpoint(
             resume_id=resume_id,
             raw_resume=raw_resume,
             processed_resume=processed_resume,
+            cover_letter=updated.get("cover_letter"),
+            outreach_message=updated.get("outreach_message"),
+            parent_id=updated.get("parent_id"),
+            title=updated.get("title"),
+            is_master=updated.get("is_master", False),
         ),
     )
 

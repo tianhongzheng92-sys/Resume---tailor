@@ -28,7 +28,7 @@ export default function ResumeViewerPage() {
   const { uiLanguage } = useLanguage();
   const params = useParams();
   const router = useRouter();
-  const { decrementResumes, setHasMasterResume } = useStatusCache();
+  const { decrementResumes, refreshStatus } = useStatusCache();
   const [resumeData, setResumeData] = useState<ResumeData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -64,6 +64,9 @@ export default function ResumeViewerPage() {
         const status = (data.raw_resume?.processing_status || 'pending') as ProcessingStatus;
         setProcessingStatus(status);
 
+        // Master flag from API (supports multiple master resumes)
+        setIsMasterResume(data.is_master === true);
+
         // Capture title for editable display (always set to clear stale state)
         setResumeTitle(data.title ?? null);
 
@@ -95,7 +98,6 @@ export default function ResumeViewerPage() {
     };
 
     loadResume();
-    setIsMasterResume(localStorage.getItem('master_resume_id') === resumeId);
   }, [resumeId, t]);
 
   const handleRetryProcessing = async () => {
@@ -185,11 +187,15 @@ export default function ResumeViewerPage() {
     try {
       setDeleteError(null);
       await deleteResume(resumeId);
-      // Update cached counters
       decrementResumes();
       if (isMasterResume) {
-        localStorage.removeItem('master_resume_id');
-        setHasMasterResume(false);
+        if (
+          typeof window !== 'undefined' &&
+          localStorage.getItem('master_resume_id') === resumeId
+        ) {
+          localStorage.removeItem('master_resume_id');
+        }
+        refreshStatus();
       }
       setShowDeleteDialog(false);
       setShowDeleteSuccessDialog(true);

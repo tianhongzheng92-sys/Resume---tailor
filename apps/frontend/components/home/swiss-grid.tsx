@@ -5,7 +5,12 @@ import Image from 'next/image';
 import Link from 'next/link';
 import { useTranslations } from '@/lib/i18n';
 
-export const SwissGrid = ({ children }: { children: React.ReactNode }) => {
+interface SwissGridProps {
+  children: React.ReactNode;
+  headerActions?: React.ReactNode;
+}
+
+export const SwissGrid = ({ children, headerActions }: SwissGridProps) => {
   const { t } = useTranslations();
 
   return (
@@ -20,15 +25,20 @@ export const SwissGrid = ({ children }: { children: React.ReactNode }) => {
     >
       {/* 2. The Main Container: Sharp black borders, creating the "Canvas" */}
       <div className="w-full max-w-[86rem] max-h-full border border-black bg-[#F0F0E8] shadow-[8px_8px_0px_0px_rgba(0,0,0,0.1)] flex flex-col overflow-hidden">
-        {/* Header Section - stays above hovered cards */}
-        <div className="border-b border-black p-8 md:p-12 shrink-0 bg-[#F0F0E8] relative z-30">
-          <h1 className="font-serif text-5xl md:text-7xl text-black tracking-tight leading-[0.95] uppercase">
-            {t('nav.dashboard')}
-          </h1>
-          <p className="mt-6 text-sm font-mono text-blue-700 uppercase tracking-wide max-w-md font-bold">
-            {'// '}
-            {t('dashboard.selectModule')}
-          </p>
+        {/* Header Section - stays above hovered cards; flex: title left, actions right */}
+        <div className="border-b border-black p-8 md:p-12 shrink-0 bg-[#F0F0E8] relative z-30 flex flex-row items-center justify-between gap-6 flex-wrap">
+          <div>
+            <h1 className="font-serif text-5xl md:text-7xl text-black tracking-tight leading-[0.95] uppercase">
+              {t('nav.dashboard')}
+            </h1>
+            <p className="mt-6 text-sm font-mono text-blue-700 uppercase tracking-wide max-w-md font-bold">
+              {'// '}
+              {t('dashboard.selectModule')}
+            </p>
+          </div>
+          {headerActions != null ? (
+            <div className="flex flex-row items-center gap-3 shrink-0">{headerActions}</div>
+          ) : null}
         </div>
 
         {/* Content Grid - Scrollable area with NO padding */}

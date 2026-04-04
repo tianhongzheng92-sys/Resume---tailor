@@ -390,6 +390,7 @@ class ResumeFetchData(BaseModel):
     outreach_message: str | None = None
     parent_id: str | None = None  # For determining if resume is tailored
     title: str | None = None
+    is_master: bool = False
 
 
 class ResumeFetchResponse(BaseModel):
@@ -417,6 +418,21 @@ class ResumeListResponse(BaseModel):
 
     request_id: str
     data: list[ResumeSummary]
+
+
+class TailoredResumeJobDescription(BaseModel):
+    """Job description text linked to a tailored resume (by improvement record)."""
+
+    resume_id: str
+    job_id: str = ""
+    content: str = ""
+
+
+class TailoredJobDescriptionsByParentResponse(BaseModel):
+    """Batch job descriptions for all tailored resumes under one master."""
+
+    request_id: str
+    data: list[TailoredResumeJobDescription]
 
 
 # Job Description Models

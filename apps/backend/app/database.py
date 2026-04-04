@@ -106,31 +106,17 @@ class Database:
         outreach_message: str | None = None,
         original_markdown: str | None = None,
     ) -> dict[str, Any]:
-        """Create a new resume with atomic master assignment.
+        """Create a new resume and mark it as a master.
 
-        Uses an asyncio.Lock to prevent race conditions when multiple uploads
-        happen concurrently and both try to become master. This avoids blocking
-        the FastAPI event loop unlike threading.Lock.
+        Multiple master resumes are allowed. Each upload creates a new master
+        resume that can be used for tailoring.
         """
         async with self._master_resume_lock:
-            current_master = self.get_master_resume()
-            is_master = current_master is None
-
-            # Recovery behavior: if the current master is stuck in failed or
-            # processing state, promote the next upload to become the new master.
-            if current_master and current_master.get("processing_status") in ("failed", "processing"):
-                Resume = Query()
-                self.resumes.update(
-                    {"is_master": False},
-                    Resume.resume_id == current_master["resume_id"],
-                )
-                is_master = True
-
             return self.create_resume(
                 content=content,
                 content_type=content_type,
                 filename=filename,
-                is_master=is_master,
+                is_master=True,
                 processed_data=processed_data,
                 processing_status=processing_status,
                 cover_letter=cover_letter,
@@ -273,7 +259,7 @@ class Database:
             "total_resumes": len(self.resumes),
             "total_jobs": len(self.jobs),
             "total_improvements": len(self.improvements),
-            "has_master_resume": self.get_master_resume() is not None,
+            "has_master_resume": self.get_master_resume() is not None,  # at least one master
         }
 
     def reset_database(self) -> None:

@@ -515,6 +515,10 @@
       "full": {
         "label": "Ajuste completo",
         "description": "Ajuste integral usando la descripción del puesto."
+      },
+      "other": {
+        "label": "Alineación profunda con la oferta",
+        "description": "Reescritura fuerte de la experiencia hacia la oferta; verbos variados; solo hechos de tu CV."
       }
     },
     "analyzeJob": "Analizar Trabajo",

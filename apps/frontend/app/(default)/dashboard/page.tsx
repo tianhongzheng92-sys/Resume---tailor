@@ -2,11 +2,13 @@
 
 import { SwissGrid } from '@/components/home/swiss-grid';
 import { ResumeUploadDialog } from '@/components/dashboard/resume-upload-dialog';
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Card, CardTitle, CardDescription } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Dialog, DialogContent } from '@/components/ui/dialog';
 import Link from 'next/link';
 import { useTranslations } from '@/lib/i18n';
 
@@ -15,11 +17,11 @@ import Loader2 from 'lucide-react/dist/esm/icons/loader-2';
 import AlertCircle from 'lucide-react/dist/esm/icons/alert-circle';
 import RefreshCw from 'lucide-react/dist/esm/icons/refresh-cw';
 import Plus from 'lucide-react/dist/esm/icons/plus';
+import History from 'lucide-react/dist/esm/icons/history';
 import Settings from 'lucide-react/dist/esm/icons/settings';
 import AlertTriangle from 'lucide-react/dist/esm/icons/alert-triangle';
 
 import {
-  fetchResume,
   fetchResumeList,
   deleteResume,
   retryProcessing,
@@ -28,17 +30,42 @@ import {
 } from '@/lib/api/resume';
 import { useStatusCache } from '@/lib/context/status-cache';
 
-type ProcessingStatus = 'pending' | 'processing' | 'ready' | 'failed' | 'loading';
-
 export default function DashboardPage() {
   const { t, locale } = useTranslations();
-  const [masterResumeId, setMasterResumeId] = useState<string | null>(null);
-  const [processingStatus, setProcessingStatus] = useState<ProcessingStatus>('loading');
-  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [masterResumes, setMasterResumes] = useState<ResumeListItem[]>([]);
   const [tailoredResumes, setTailoredResumes] = useState<ResumeListItem[]>([]);
-  const [isRetrying, setIsRetrying] = useState(false);
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [masterIdToDelete, setMasterIdToDelete] = useState<string | null>(null);
+  const [retryingId, setRetryingId] = useState<string | null>(null);
   const [isUploadDialogOpen, setIsUploadDialogOpen] = useState(false);
+  const [filterJobTitle, setFilterJobTitle] = useState('');
+  const [filterCompany, setFilterCompany] = useState('');
+  const [filterDateFrom, setFilterDateFrom] = useState('');
+  const [filterDateTo, setFilterDateTo] = useState('');
+  const [filterMasterResumeId, setFilterMasterResumeId] = useState('');
+  const [showHistoryModal, setShowHistoryModal] = useState(false);
   const router = useRouter();
+
+  const getMasterDisplayName = (parentId: string | null): string => {
+    if (!parentId) return '—';
+    const master = masterResumes.find((m) => m.resume_id === parentId);
+    return master?.title || master?.filename || parentId.slice(0, 8) || '—';
+  };
+
+  /** Parse resume title into job title and company (e.g. "Software Engineer @ Mercor" → jobTitle, company) */
+  const parseTitleAndCompany = (
+    title: string | null | undefined
+  ): { jobTitle: string; company: string } => {
+    const raw = title?.trim() || '';
+    const atIndex = raw.indexOf(' @ ');
+    if (atIndex >= 0) {
+      return {
+        jobTitle: raw.slice(0, atIndex).trim() || '—',
+        company: raw.slice(atIndex + 3).trim() || '—',
+      };
+    }
+    return { jobTitle: raw || '—', company: '—' };
+  };
 
   // Status cache for optimistic counter updates and LLM status check
   const {
@@ -57,10 +84,10 @@ export default function DashboardPage() {
   // Check if LLM is configured (API key is set)
   const isLlmConfigured = !statusLoading && systemStatus?.llm_configured;
 
-  const isTailorEnabled =
-    Boolean(masterResumeId) && processingStatus === 'ready' && isLlmConfigured;
+  const hasReadyMaster = masterResumes.some((m) => m.processing_status === 'ready');
+  const isTailorEnabled = hasReadyMaster && isLlmConfigured;
 
-  const formatDate = (value: string) => {
+  const formatDateTime = (value: string) => {
     if (!value) return t('common.unknown');
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) return t('common.unknown');
@@ -68,62 +95,76 @@ export default function DashboardPage() {
     const dateLocale =
       locale === 'es' ? 'es-ES' : locale === 'zh' ? 'zh-CN' : locale === 'ja' ? 'ja-JP' : 'en-US';
 
-    return date.toLocaleDateString(dateLocale, {
+    return date.toLocaleString(dateLocale, {
       month: 'short',
       day: '2-digit',
       year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
     });
   };
 
-  const checkResumeStatus = useCallback(async (resumeId: string) => {
-    try {
-      setProcessingStatus('loading');
-      const data = await fetchResume(resumeId);
-      const status = data.raw_resume?.processing_status || 'pending';
-      setProcessingStatus(status as ProcessingStatus);
-    } catch (err: unknown) {
-      console.error('Failed to check resume status:', err);
-      // If resume not found (404), clear the stale localStorage
-      if (err instanceof Error && err.message.includes('404')) {
-        localStorage.removeItem('master_resume_id');
-        setMasterResumeId(null);
-        return;
-      }
-      setProcessingStatus('failed');
-    }
-  }, []);
+  const filteredTailoredResumes = useMemo(() => {
+    const filtered = tailoredResumes.filter((r) => {
+      const fullTitle = r.title || r.jobSnippet || r.filename || '';
+      const { jobTitle, company } = parseTitleAndCompany(fullTitle);
+      const created = r.created_at || '';
 
-  useEffect(() => {
-    const storedId = localStorage.getItem('master_resume_id');
-    if (storedId) {
-      setMasterResumeId(storedId);
-      checkResumeStatus(storedId);
-    }
-  }, [checkResumeStatus]);
+      if (filterMasterResumeId) {
+        if (r.parent_id !== filterMasterResumeId) return false;
+      }
+      if (filterJobTitle.trim()) {
+        const q = filterJobTitle.trim().toLowerCase();
+        if (!jobTitle.toLowerCase().includes(q)) return false;
+      }
+      if (filterCompany.trim()) {
+        const q = filterCompany.trim().toLowerCase();
+        if (!company.toLowerCase().includes(q)) return false;
+      }
+      if (filterDateFrom) {
+        if (!created || created.slice(0, 10) < filterDateFrom) return false;
+      }
+      if (filterDateTo) {
+        if (!created || created.slice(0, 10) > filterDateTo) return false;
+      }
+      return true;
+    });
+    return [...filtered].sort(
+      (a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()
+    );
+  }, [
+    tailoredResumes,
+    filterMasterResumeId,
+    filterJobTitle,
+    filterCompany,
+    filterDateFrom,
+    filterDateTo,
+  ]);
 
   const loadTailoredResumes = useCallback(async () => {
     try {
       const data = await fetchResumeList(true);
-      const masterFromList = data.find((r) => r.is_master);
-      const storedId = localStorage.getItem('master_resume_id');
-      const resolvedMasterId = masterFromList?.resume_id || storedId;
+      const masters = data.filter((r) => r.is_master);
+      const tailored = data.filter((r) => !r.is_master);
 
-      if (resolvedMasterId) {
-        localStorage.setItem('master_resume_id', resolvedMasterId);
-        setMasterResumeId(resolvedMasterId);
-        checkResumeStatus(resolvedMasterId);
+      setMasterResumes(masters);
+      setTailoredResumes(tailored);
+      setHasMasterResume(masters.length > 0);
+
+      // Keep last-used master for tailor page default; if none set, use first master
+      const storedId = localStorage.getItem('master_resume_id');
+      if (masters.length > 0) {
+        const validStored = masters.some((m) => m.resume_id === storedId);
+        if (!storedId || !validStored) {
+          localStorage.setItem('master_resume_id', masters[0].resume_id);
+        }
       } else {
         localStorage.removeItem('master_resume_id');
-        setMasterResumeId(null);
       }
-
-      const filtered = data.filter((r) => r.resume_id !== resolvedMasterId);
-      setTailoredResumes(filtered);
 
       // Only fetch job descriptions for resumes that are actually tailored
       // (identified by having a non-null parent_id). This avoids N+1 calls
-      // for untailored resumes.
-      const tailoredWithParent = filtered.filter((r) => r.parent_id);
+      const tailoredWithParent = tailored.filter((r) => r.parent_id);
 
       // Guard against concurrent invocations overwriting each other
       const requestId = ++loadRequestIdRef.current;
@@ -160,7 +201,7 @@ export default function DashboardPage() {
     } catch (err) {
       console.error('Failed to load tailored resumes:', err);
     }
-  }, [checkResumeStatus]);
+  }, [setHasMasterResume]);
 
   useEffect(() => {
     loadTailoredResumes();
@@ -173,65 +214,79 @@ export default function DashboardPage() {
     };
     window.addEventListener('focus', handleFocus);
     return () => window.removeEventListener('focus', handleFocus);
-  }, [loadTailoredResumes, checkResumeStatus]);
+  }, [loadTailoredResumes]);
+
+  useEffect(() => {
+    if (!showHistoryModal) return;
+    // Ensure all histories are visible by default when the modal opens.
+    setFilterMasterResumeId('');
+    setFilterJobTitle('');
+    setFilterCompany('');
+    setFilterDateFrom('');
+    setFilterDateTo('');
+  }, [showHistoryModal]);
 
   const handleUploadComplete = (resumeId: string) => {
     localStorage.setItem('master_resume_id', resumeId);
-    setMasterResumeId(resumeId);
-    // Check status after upload completes
-    checkResumeStatus(resumeId);
-    // Update cached counters
     incrementResumes();
     setHasMasterResume(true);
+    loadTailoredResumes();
   };
 
-  const handleRetryProcessing = async (e: React.MouseEvent) => {
+  const handleRetryProcessing = async (e: React.MouseEvent, resumeId: string) => {
     e.stopPropagation();
-    if (!masterResumeId) return;
-    setIsRetrying(true);
+    setRetryingId(resumeId);
     try {
-      const result = await retryProcessing(masterResumeId);
-      if (result.processing_status === 'ready') {
-        setProcessingStatus('ready');
-      } else if (
+      const result = await retryProcessing(resumeId);
+      if (
+        result.processing_status === 'ready' ||
         result.processing_status === 'processing' ||
         result.processing_status === 'pending'
       ) {
-        setProcessingStatus(result.processing_status);
+        setMasterResumes((prev) =>
+          prev.map((m) =>
+            m.resume_id === resumeId ? { ...m, processing_status: result.processing_status } : m
+          )
+        );
       } else {
-        setProcessingStatus('failed');
+        setMasterResumes((prev) =>
+          prev.map((m) => (m.resume_id === resumeId ? { ...m, processing_status: 'failed' } : m))
+        );
       }
     } catch (err) {
       console.error('Retry processing failed:', err);
-      setProcessingStatus('failed');
+      setMasterResumes((prev) =>
+        prev.map((m) => (m.resume_id === resumeId ? { ...m, processing_status: 'failed' } : m))
+      );
     } finally {
-      setIsRetrying(false);
+      setRetryingId(null);
     }
   };
 
-  const handleDeleteAndReupload = (e: React.MouseEvent) => {
+  const handleDeleteMaster = (e: React.MouseEvent, resumeId: string) => {
     e.stopPropagation();
+    setMasterIdToDelete(resumeId);
     setShowDeleteDialog(true);
   };
 
-  const confirmDeleteAndReupload = async () => {
-    if (!masterResumeId) return;
+  const confirmDeleteMaster = async () => {
+    if (!masterIdToDelete) return;
     try {
-      await deleteResume(masterResumeId);
+      await deleteResume(masterIdToDelete);
       decrementResumes();
-      setHasMasterResume(false);
-      localStorage.removeItem('master_resume_id');
-      setMasterResumeId(null);
-      setProcessingStatus('loading');
-      setIsUploadDialogOpen(true);
+      if (localStorage.getItem('master_resume_id') === masterIdToDelete) {
+        localStorage.removeItem('master_resume_id');
+      }
+      setMasterIdToDelete(null);
+      setShowDeleteDialog(false);
       await loadTailoredResumes();
     } catch (err) {
       console.error('Failed to delete resume:', err);
     }
   };
 
-  const getStatusDisplay = () => {
-    switch (processingStatus) {
+  const getStatusDisplay = (status: string) => {
+    switch (status) {
       case 'loading':
         return {
           text: t('dashboard.status.checking'),
@@ -257,36 +312,7 @@ export default function DashboardPage() {
     }
   };
 
-  const getMonogram = (title: string): string => {
-    const words = title.split(/\s+/).filter((w) => /^[a-zA-Z]/.test(w));
-    return words
-      .slice(0, 3)
-      .map((w) => w.charAt(0).toUpperCase())
-      .join('');
-  };
-
-  // Muted palette that complements the #F0F0E8 canvas
-  const cardPalette = [
-    { bg: '#1D4ED8', fg: '#FFFFFF' }, // Hyper Blue
-    { bg: '#15803D', fg: '#FFFFFF' }, // Signal Green
-    { bg: '#000000', fg: '#FFFFFF' }, // Ink
-    { bg: '#92400E', fg: '#FFFFFF' }, // Warm Brown
-    { bg: '#7C3AED', fg: '#FFFFFF' }, // Violet
-    { bg: '#0E7490', fg: '#FFFFFF' }, // Teal
-    { bg: '#B91C1C', fg: '#FFFFFF' }, // Deep Red
-    { bg: '#4338CA', fg: '#FFFFFF' }, // Indigo
-  ];
-
-  const hashTitle = (title: string): number => {
-    let hash = 0;
-    for (let i = 0; i < title.length; i++) {
-      hash = (hash << 5) - hash + title.charCodeAt(i);
-      hash |= 0;
-    }
-    return Math.abs(hash);
-  };
-
-  const totalCards = 1 + tailoredResumes.length + 1;
+  const totalCards = masterResumes.length + 1; // masters + Add master
   const fillerCount = Math.max(0, (5 - (totalCards % 5)) % 5);
   const extraFillerCount = 5;
   // Use Tailwind classes for fillers now that we have them in config or use specific hex if needed
@@ -296,7 +322,7 @@ export default function DashboardPage() {
   return (
     <div className="space-y-6">
       {/* Configuration Warning Banner */}
-      {masterResumeId && !isLlmConfigured && !statusLoading && (
+      {masterResumes.length > 0 && !isLlmConfigured && !statusLoading && (
         <div className="border-2 border-warning bg-amber-50 p-4 shadow-sw-default mb-6 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <AlertTriangle className="w-5 h-5 text-warning" />
@@ -318,11 +344,31 @@ export default function DashboardPage() {
         </div>
       )}
 
-      <SwissGrid>
-        {/* 1. Master Resume Logic */}
-        {!masterResumeId ? (
-          // LLM Not Configured or Upload State
-          !isLlmConfigured && !statusLoading ? (
+      <SwissGrid
+        headerActions={
+          <>
+            <Button
+              onClick={() => router.push('/tailor')}
+              disabled={!isTailorEnabled}
+              className="h-11 px-5 bg-blue-700 text-white border-2 border-black shadow-sw-default hover:bg-blue-800 hover:translate-y-[2px] hover:translate-x-[2px] hover:shadow-none transition-all rounded-none font-mono text-sm uppercase flex items-center gap-2"
+            >
+              <Plus className="w-5 h-5" />
+              {t('dashboard.createResume')}
+            </Button>
+            <Button
+              onClick={() => setShowHistoryModal(true)}
+              variant="outline"
+              className="h-11 px-5 border-2 border-black shadow-sw-default hover:bg-[#F0F0E8] hover:translate-y-[2px] hover:translate-x-[2px] hover:shadow-none transition-all rounded-none font-mono text-sm uppercase flex items-center gap-2"
+            >
+              <History className="w-5 h-5" />
+              {t('dashboard.createdResumesHistory')}
+            </Button>
+          </>
+        }
+      >
+        {/* No masters: show setup or initialize card */}
+        {masterResumes.length === 0 &&
+          (!isLlmConfigured && !statusLoading ? (
             <Link href="/settings" className="block h-full">
               <Card
                 variant="interactive"
@@ -376,136 +422,110 @@ export default function DashboardPage() {
                 </Card>
               }
             />
-          )
-        ) : (
-          // Master Resume Exists
-          <Card
-            variant="interactive"
-            className="aspect-square h-full"
-            onClick={() => router.push(`/resumes/${masterResumeId}`)}
-          >
-            <div className="flex-1 flex flex-col h-full">
-              <div className="flex justify-between items-start mb-6">
-                <div className="w-16 h-16 border-2 border-black bg-blue-700 text-white flex items-center justify-center">
-                  <span className="font-mono font-bold text-lg">M</span>
-                </div>
-                <div className="flex gap-1">
-                  {(processingStatus === 'failed' || processingStatus === 'processing') && (
-                    <>
+          ))}
+
+        {/* Master resume cards */}
+        {masterResumes.map((master) => {
+          const status = master.processing_status || 'pending';
+          const statusDisplay = getStatusDisplay(status);
+          const title = master.title || master.filename || t('dashboard.masterResume');
+          return (
+            <Card
+              key={master.resume_id}
+              variant="interactive"
+              className="aspect-square h-full"
+              onClick={() => router.push(`/resumes/${master.resume_id}`)}
+            >
+              <div className="flex-1 flex flex-col h-full">
+                <div className="flex justify-between items-start mb-6">
+                  <div className="w-16 h-16 border-2 border-black bg-blue-700 text-white flex items-center justify-center">
+                    <span className="font-mono font-bold text-lg">M</span>
+                  </div>
+                  <div className="flex gap-1">
+                    {(status === 'failed' || status === 'processing') && (
                       <Button
                         variant="ghost"
                         size="icon"
                         className="h-8 w-8 hover:bg-blue-100 hover:text-blue-700 z-10 rounded-none relative"
-                        onClick={handleRetryProcessing}
-                        disabled={isRetrying}
+                        onClick={(e) => handleRetryProcessing(e, master.resume_id)}
+                        disabled={retryingId === master.resume_id}
                         title={t('dashboard.retryProcessing')}
                       >
-                        {isRetrying ? (
+                        {retryingId === master.resume_id ? (
                           <Loader2 className="w-4 h-4 animate-spin" />
                         ) : (
                           <RefreshCw className="w-4 h-4" />
                         )}
                       </Button>
-                    </>
+                    )}
+                  </div>
+                </div>
+
+                <CardTitle className="text-lg group-hover:text-primary line-clamp-2">
+                  {title}
+                </CardTitle>
+
+                <div
+                  className={`text-xs font-mono mt-auto pt-4 flex flex-col gap-2 uppercase ${statusDisplay.color}`}
+                >
+                  <div className="flex items-center gap-1">
+                    {statusDisplay.icon}
+                    {t('dashboard.statusLine', { status: statusDisplay.text })}
+                  </div>
+                  {(status === 'failed' || status === 'processing') && (
+                    <div className="flex gap-2" onClick={(e) => e.stopPropagation()}>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="text-xs h-7 rounded-none border-black"
+                        onClick={(e) => handleRetryProcessing(e, master.resume_id)}
+                        disabled={retryingId === master.resume_id}
+                      >
+                        {retryingId === master.resume_id
+                          ? t('dashboard.retryingProcessing')
+                          : t('dashboard.retryProcessing')}
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="text-xs h-7 rounded-none border-red-600 text-red-600 hover:bg-red-50"
+                        onClick={(e) => handleDeleteMaster(e, master.resume_id)}
+                      >
+                        {t('dashboard.deleteAndReupload')}
+                      </Button>
+                    </div>
                   )}
                 </div>
-              </div>
-
-              <CardTitle className="text-lg group-hover:text-primary">
-                {t('dashboard.masterResume')}
-              </CardTitle>
-
-              <div
-                className={`text-xs font-mono mt-auto pt-4 flex flex-col gap-2 uppercase ${getStatusDisplay().color}`}
-              >
-                <div className="flex items-center gap-1">
-                  {getStatusDisplay().icon}
-                  {t('dashboard.statusLine', { status: getStatusDisplay().text })}
-                </div>
-                {(processingStatus === 'failed' || processingStatus === 'processing') && (
-                  <div className="flex gap-2" onClick={(e) => e.stopPropagation()}>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="text-xs h-7 rounded-none border-black"
-                      onClick={handleRetryProcessing}
-                      disabled={isRetrying}
-                    >
-                      {isRetrying
-                        ? t('dashboard.retryingProcessing')
-                        : t('dashboard.retryProcessing')}
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="text-xs h-7 rounded-none border-red-600 text-red-600 hover:bg-red-50"
-                      onClick={handleDeleteAndReupload}
-                    >
-                      {t('dashboard.deleteAndReupload')}
-                    </Button>
-                  </div>
-                )}
-              </div>
-            </div>
-          </Card>
-        )}
-
-        {/* 2. Tailored Resumes */}
-        {tailoredResumes.map((resume) => {
-          const title =
-            resume.title || resume.jobSnippet || resume.filename || t('dashboard.tailoredResume');
-          const color = cardPalette[hashTitle(title) % cardPalette.length];
-          return (
-            <Card
-              key={resume.resume_id}
-              variant="interactive"
-              className="aspect-square h-full bg-canvas"
-              onClick={() => router.push(`/resumes/${resume.resume_id}`)}
-            >
-              <div className="flex-1 flex flex-col">
-                <div className="flex justify-between items-start mb-6">
-                  <div
-                    className="w-12 h-12 border-2 border-black flex items-center justify-center"
-                    style={{ backgroundColor: color.bg, color: color.fg }}
-                  >
-                    <span className="font-mono font-bold">{getMonogram(title)}</span>
-                  </div>
-                  <span className="font-mono text-xs text-gray-500 uppercase">
-                    {resume.processing_status}
-                  </span>
-                </div>
-                <CardTitle className="text-lg">
-                  <span className="block font-serif text-base font-bold leading-tight mb-1 w-full line-clamp-2">
-                    {title}
-                  </span>
-                </CardTitle>
-                <CardDescription className="mt-auto pt-4 uppercase">
-                  {t('dashboard.edited', {
-                    date: formatDate(resume.updated_at || resume.created_at),
-                  })}{' '}
-                </CardDescription>
               </div>
             </Card>
           );
         })}
 
-        {/* 3. Create Tailored Resume */}
-        <Card className="aspect-square h-full" variant="default">
-          <div className="flex-1 flex flex-col items-center justify-center text-center h-full">
-            <Button
-              onClick={() => router.push('/tailor')}
-              disabled={!isTailorEnabled}
-              className="w-20 h-20 bg-blue-700 text-white border-2 border-black shadow-sw-default hover:bg-blue-800 hover:translate-y-[2px] hover:translate-x-[2px] hover:shadow-none transition-all rounded-none"
-            >
-              <Plus className="w-8 h-8" />
-            </Button>
-            <p className="text-xs font-mono mt-4 uppercase text-green-700">
-              {t('dashboard.createResume')}
-            </p>
-          </div>
-        </Card>
+        {/* Add another master */}
+        {masterResumes.length > 0 && (
+          <ResumeUploadDialog
+            open={isUploadDialogOpen}
+            onOpenChange={setIsUploadDialogOpen}
+            onUploadComplete={handleUploadComplete}
+            trigger={
+              <Card
+                variant="interactive"
+                className="aspect-square h-full hover:bg-primary hover:text-canvas border-dashed border-black"
+              >
+                <div className="flex-1 flex flex-col justify-center items-center pointer-events-none">
+                  <div className="w-14 h-14 border-2 border-current flex items-center justify-center mb-4">
+                    <span className="text-2xl leading-none">+</span>
+                  </div>
+                  <CardTitle className="text-lg uppercase">
+                    {t('dashboard.addMasterResume')}
+                  </CardTitle>
+                </div>
+              </Card>
+            }
+          />
+        )}
 
-        {/* 4. Fillers */}
+        {/* Fillers */}
         {Array.from({ length: fillerCount }).map((_, index) => (
           <Card
             key={`filler-${index}`}
@@ -531,10 +551,157 @@ export default function DashboardPage() {
           description={t('confirmations.deleteMasterResumeDescription')}
           confirmLabel={t('dashboard.deleteAndReupload')}
           cancelLabel={t('confirmations.keepResumeCancelLabel')}
-          onConfirm={confirmDeleteAndReupload}
+          onConfirm={confirmDeleteMaster}
           variant="danger"
         />
       </SwissGrid>
+
+      {/* Created Resumes History — modal */}
+      <Dialog open={showHistoryModal} onOpenChange={setShowHistoryModal}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-hidden flex flex-col p-0">
+          <div className="pl-6 pr-14 pt-6 pb-0 flex-shrink-0">
+            <h2 className="font-serif text-xl font-bold uppercase tracking-tight">
+              {t('dashboard.tailoredResumesHistory')}
+            </h2>
+          </div>
+          <div className="p-6 overflow-y-auto flex-1 min-h-0">
+            <div className="mb-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+              <div>
+                <label className="block font-mono text-xs font-bold uppercase text-gray-600 mb-1">
+                  {t('dashboard.filterMasterResume')}
+                </label>
+                <select
+                  value={filterMasterResumeId}
+                  onChange={(e) => setFilterMasterResumeId(e.target.value)}
+                  className="flex h-10 w-full border border-black bg-transparent px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-blue-700 rounded-none"
+                >
+                  <option value="">{t('dashboard.filterAllMasters')}</option>
+                  {masterResumes.map((m) => (
+                    <option key={m.resume_id} value={m.resume_id}>
+                      {m.title || m.filename || m.resume_id.slice(0, 8)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block font-mono text-xs font-bold uppercase text-gray-600 mb-1">
+                  {t('dashboard.filterJobTitle')}
+                </label>
+                <Input
+                  type="text"
+                  placeholder={t('dashboard.filterJobTitlePlaceholder')}
+                  value={filterJobTitle}
+                  onChange={(e) => setFilterJobTitle(e.target.value)}
+                  className="rounded-none"
+                />
+              </div>
+              <div>
+                <label className="block font-mono text-xs font-bold uppercase text-gray-600 mb-1">
+                  {t('dashboard.filterCompany')}
+                </label>
+                <Input
+                  type="text"
+                  placeholder={t('dashboard.filterCompanyPlaceholder')}
+                  value={filterCompany}
+                  onChange={(e) => setFilterCompany(e.target.value)}
+                  className="rounded-none"
+                />
+              </div>
+              <div>
+                <label className="block font-mono text-xs font-bold uppercase text-gray-600 mb-1">
+                  {t('dashboard.filterDateFrom')}
+                </label>
+                <Input
+                  type="date"
+                  value={filterDateFrom}
+                  onChange={(e) => setFilterDateFrom(e.target.value)}
+                  className="rounded-none"
+                />
+              </div>
+              <div>
+                <label className="block font-mono text-xs font-bold uppercase text-gray-600 mb-1">
+                  {t('dashboard.filterDateTo')}
+                </label>
+                <Input
+                  type="date"
+                  value={filterDateTo}
+                  onChange={(e) => setFilterDateTo(e.target.value)}
+                  className="rounded-none"
+                />
+              </div>
+            </div>
+
+            <div className="mb-3 font-mono text-xs uppercase text-gray-700">
+              Total: {tailoredResumes.length} / Showing: {filteredTailoredResumes.length}
+            </div>
+
+            <div className="overflow-x-auto border border-black">
+              <table className="w-full border-collapse font-sans text-sm">
+                <thead>
+                  <tr className="bg-[#F0F0E8] border-b-2 border-black">
+                    <th className="text-left font-mono font-bold uppercase py-3 px-4 border-r border-black w-14">
+                      {t('dashboard.tableNo')}
+                    </th>
+                    <th className="text-left font-mono font-bold uppercase py-3 px-4 border-r border-black">
+                      {t('dashboard.tableMasterResume')}
+                    </th>
+                    <th className="text-left font-mono font-bold uppercase py-3 px-4 border-r border-black">
+                      {t('dashboard.tableJobTitle')}
+                    </th>
+                    <th className="text-left font-mono font-bold uppercase py-3 px-4 border-r border-black">
+                      {t('dashboard.tableCompany')}
+                    </th>
+                    <th className="text-left font-mono font-bold uppercase py-3 px-4">
+                      {t('dashboard.tableCreatedDate')}
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredTailoredResumes.length === 0 ? (
+                    <tr>
+                      <td
+                        colSpan={5}
+                        className="py-8 px-4 text-center font-mono text-gray-500 uppercase"
+                      >
+                        {tailoredResumes.length === 0
+                          ? t('dashboard.noTailoredResumes')
+                          : t('dashboard.noMatchingResumes')}
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredTailoredResumes.map((resume, index) => {
+                      const fullTitle = resume.title || resume.jobSnippet || resume.filename || '';
+                      const { jobTitle, company } = parseTitleAndCompany(fullTitle);
+                      return (
+                        <tr
+                          key={resume.resume_id}
+                          className="border-b border-gray-300 hover:bg-blue-50/50 cursor-pointer transition-colors"
+                          onClick={() => {
+                            setShowHistoryModal(false);
+                            router.push(`/resumes/${resume.resume_id}`);
+                          }}
+                        >
+                          <td className="py-3 px-4 border-r border-gray-200 font-mono">
+                            {index + 1}
+                          </td>
+                          <td className="py-3 px-4 border-r border-gray-200">
+                            {getMasterDisplayName(resume.parent_id)}
+                          </td>
+                          <td className="py-3 px-4 border-r border-gray-200">{jobTitle}</td>
+                          <td className="py-3 px-4 border-r border-gray-200">{company}</td>
+                          <td className="py-3 px-4 font-mono">
+                            {formatDateTime(resume.created_at || '')}
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

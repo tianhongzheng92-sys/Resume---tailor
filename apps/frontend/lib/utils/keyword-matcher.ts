@@ -290,3 +290,49 @@ export function calculateMatchStats(
 
   return { matchedKeywords, matchCount, totalKeywords, matchPercentage };
 }
+
+/**
+ * Keyword overlap between two job descriptions (same extraction rules as JD–resume matching).
+ *
+ * - `matchPercentage`: share of keywords from `referenceJd` that also appear in `otherJd` (0–100).
+ * - `jaccardPercentage`: |A∩B| / |A∪B| × 100 for a symmetric similarity score.
+ */
+export function calculateJdKeywordOverlap(
+  referenceJd: string,
+  otherJd: string
+): {
+  matchedCount: number;
+  referenceKeywordCount: number;
+  otherKeywordCount: number;
+  matchPercentage: number;
+  jaccardPercentage: number;
+} {
+  const keywordsA = extractKeywords(referenceJd);
+  const keywordsB = extractKeywords(otherJd);
+
+  if (keywordsA.size === 0) {
+    return {
+      matchedCount: 0,
+      referenceKeywordCount: 0,
+      otherKeywordCount: keywordsB.size,
+      matchPercentage: 0,
+      jaccardPercentage: 0,
+    };
+  }
+
+  let matchedCount = 0;
+  for (const kw of keywordsA) {
+    if (keywordsB.has(kw)) matchedCount++;
+  }
+
+  const union = new Set<string>([...keywordsA, ...keywordsB]);
+  const jaccardPercentage = union.size > 0 ? Math.round((matchedCount / union.size) * 100) : 0;
+
+  return {
+    matchedCount,
+    referenceKeywordCount: keywordsA.size,
+    otherKeywordCount: keywordsB.size,
+    matchPercentage: Math.round((matchedCount / keywordsA.size) * 100),
+    jaccardPercentage,
+  };
+}

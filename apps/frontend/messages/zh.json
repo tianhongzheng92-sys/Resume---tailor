@@ -515,6 +515,10 @@
       "full": {
         "label": "完全定制",
         "description": "基于职位描述进行全面定制。"
+      },
+      "other": {
+        "label": "深度贴合职位描述",
+        "description": "经历向职位描述强力改写，丰富动词，仅基于简历事实。"
       }
     },
     "analyzeJob": "分析职位",

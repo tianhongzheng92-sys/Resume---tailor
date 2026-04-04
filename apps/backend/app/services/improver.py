@@ -15,7 +15,7 @@ from app.prompts import (
     IMPROVE_RESUME_PROMPTS,
     get_language_name,
 )
-from app.prompts.templates import IMPROVE_SCHEMA_EXAMPLE
+from app.prompts.templates import IMPROVE_RECRUITER_ATS_FRAMEWORK, IMPROVE_SCHEMA_EXAMPLE
 from app.schemas import ResumeData, ResumeFieldDiff, ResumeDiffSummary
 
 logger = logging.getLogger(__name__)
@@ -208,11 +208,23 @@ async def improve_resume(
         schema=IMPROVE_SCHEMA_EXAMPLE,
         output_language=output_language,
         critical_truthfulness_rules=truthfulness_rules,
+        recruiter_ats_framework=IMPROVE_RECRUITER_ATS_FRAMEWORK,
+    )
+
+    # Log the full prompt string when generating tailored resume (for debugging)
+    logger.info(
+        "=== GENERATE TAILORED RESUME PROMPT (prompt_id=%s) ===\n%s\n=== END PROMPT ===",
+        selected_prompt_id,
+        prompt,
     )
 
     result = await complete_json(
         prompt=prompt,
-        system_prompt="You are an expert resume editor. Output only valid JSON.",
+        system_prompt=(
+            "You are a senior technical recruiter and ATS optimization expert. "
+            "Output only valid JSON matching the user's schema—no match scores, "
+            "reasons, gap lists, or alternate resume versions in the reply."
+        ),
         max_tokens=8192,
     )
 
