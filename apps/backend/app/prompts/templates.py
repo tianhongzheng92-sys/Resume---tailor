@@ -165,7 +165,7 @@ Act as a senior technical recruiter and ATS optimization expert.
 
 **Tailoring:** Map experience to JD responsibilities and requirements only where the source resume supports it. Prioritize impact over task lists; remove or reduce irrelevant or low-impact content where your mode rules allow. Keep values ATS-friendly plain text (no markdown tables inside strings).
 
-**Metrics:** Where your mode allows bullet edits, aim for a high share of workExperience bullets (target **70%+**) to include a measurable result (%, $, scale, users, latency, timelines, counts, team size, etc.) only when the original resume states or clearly implies it—never invent or "estimate" metrics to hit the ratio. In minimal-edit modes, only rephrase existing facts to surface implied scale; do not fabricate numbers."""
+**Metrics:** First, count how many bullets per role already contain numbers or clear scale in the original—your output must **keep that level of quantification** (same or higher share of quantified bullets per job), not zero it out. Aim for a high share (e.g. **70%+**) of bullets with a measurable line **only where the source supports it**—never invent or "estimate" metrics to hit a ratio. Never remove existing %, $, counts, or timelines to sound simpler; rephrase around them if needed. In minimal-edit modes, preserve every figure from the source."""
 
 PARSE_RESUME_PROMPT = """Parse this resume into JSON. Output ONLY the JSON object, no other text.
 
@@ -188,6 +188,8 @@ Rules:
 - Normalize date separators: "2020-2021" → "2020 - 2021", "Current"/"Ongoing" → "Present". Do NOT discard months.
 - For ambiguous dates like "3 years experience", infer approximate years from context or use "~YYYY"
 - Flag overlapping dates (concurrent roles) by preserving both, don't merge
+- Preserve all numbers, percentages, currency amounts, and quantitative outcomes in work experience and project bullets exactly as written (do not strip metrics when normalizing wording).
+- Technical skills (section titles like Skills, Technical Skills, Technologies, Tools, Core Competencies): MUST go in `additional.technicalSkills` as a JSON array of strings with ONE skill per element (e.g. ["Python", "AWS", "Kubernetes"]). If the resume lists skills separated by commas or pipes on one line, split them into separate array elements. Do NOT put the only copy of skills only in `customSections` unless the section is non-technical; prefer `additional.technicalSkills` for standard skill lists.
 
 Resume to parse:
 {resume_text}"""
@@ -206,7 +208,13 @@ Example format:
   "seniority_level": "senior"
 }}
 
-Extract numeric years (e.g., "5+ years" → 5) and infer seniority level.
+Rules for required_skills, preferred_skills, and keywords (used for resume matching):
+- Use SHORT, atomic tokens a candidate would type on a resume: tool names, languages, frameworks, platforms (e.g. "Python", "AWS", "Kubernetes", "PostgreSQL"), not full sentences.
+- Prefer the spelling the JD uses for each technology; include one canonical entry per concept (avoid listing the same idea three ways across lists).
+- Put must-haves in required_skills, nice-to-haves in preferred_skills, and domain/process terms (e.g. "microservices", "CI/CD", "Agile") in keywords.
+- Do NOT put long JD phrases, entire bullet sentences, or duplicate the same term in multiple lists—each distinct token should appear once, in the strongest appropriate list only.
+- Omit vague filler that never appears as a literal resume keyword (e.g. "strong communication skills") unless the JD names a specific method or credential.
+- Extract numeric years (e.g., "5+ years" → 5) and infer seniority level.
 
 Job description:
 {job_description}"""
@@ -221,6 +229,7 @@ CRITICAL_TRUTHFULNESS_RULES_TEMPLATE = """CRITICAL TRUTHFULNESS RULES - NEVER VI
 7. {rule_7}
 8. Preserve factual accuracy - only use information provided by the candidate
 9. NEVER remove existing skills, certifications, languages, or awards. You may reorder by relevance, but every original item must remain.
+10. PRESERVE QUANTIFIED IMPACT FROM THE SOURCE: Do not remove, round away, or replace with vague wording any numeric facts already in the original resume (%, $, counts, ranges, durations, team or user scale, latency, throughput, revenue, adoption figures). When you rewrite bullets, carry those exact values forward in the same role. Keep at least the same proportion of workExperience (and personalProjects) bullets that include a measurable figure as in the source for that employer/project—do not de-quantify for brevity, anti-repetition, or JD alignment. "Do not invent metrics" means never add false numbers; it does NOT mean strip real ones.
 
 Violation of these rules could cause serious problems for the candidate in job interviews.
 """
@@ -267,7 +276,7 @@ Rules:
 - Copy the "years" field values EXACTLY as they appear in the original resume (including any month prefixes like "Jan 2020 - Present"). Do not shorten, reformat, or drop months.
 - If the resume is non-technical, do NOT add technical jargon
 - Do NOT use em dash ("—") anywhere in the writing/output, even if it exists, remove it
-- Quantify impact (light touch): where a bullet already states or clearly implies scale, time, counts, or percentages, keep or surface that signal in plain form; do not add new numbers.
+- Quantify impact (light touch): where a bullet already states or clearly implies scale, time, counts, or percentages, keep or surface that signal in plain form; do not add new numbers. **Never drop existing figures** when rephrasing (same values, clearer sentence).
 - Anti-repetition: if two adjacent bullets start with the same action verb, rephrase one opener (keep facts). Avoid repeating identical clause openings across bullets.
 
 Job Description:
@@ -307,8 +316,8 @@ Rules:
 - If resume is non-technical, keep language non-technical while still aligning keywords
 - Do NOT use em dash ("—") anywhere in the writing/output, even if it exists, remove it
 - Skills: One skill per line (vertical list, no commas). Include all JD-relevant skills the candidate is qualified for.
-- Quantify impact: rewrite weaker bullets so they lead with or include concrete metrics where the resume already supports them (percentages, counts, team size, latency, savings, users, release cadence, data volume, duration). Make implicit scale explicit when it is clearly grounded in the original text. Never invent statistics; do not infer or estimate numbers to “fill in” gaps—omit metrics rather than guess.
-- Aim for a high share of bullets with measurable signals when the source allows; never fabricate to hit a percentage target.
+- Quantify impact: rewrite weaker bullets so they lead with or include concrete metrics where the resume already supports them (percentages, counts, team size, latency, savings, users, release cadence, data volume, duration). Make implicit scale explicit when it is clearly grounded in the original text. Never invent statistics; do not infer or estimate numbers to “fill in” gaps—where the source had no metric, keep qualitative wording; **where the source had a metric, you must keep it** (do not drop numbers to avoid guessing).
+- Aim for a high share of bullets with measurable signals when the source allows; never fabricate to hit a percentage target. **Preserve the original resume’s density of quantified bullets per role**—do not systematically remove figures.
 
 Job Description:
 {job_description}
@@ -335,7 +344,7 @@ Rules:
 - Act as a senior technical recruiter optimizing for impact and ATS: tailored JSON resume, plain text inside string fields (no complex formatting).
 - Make targeted adjustments to bullet points to align with job description phrasing. Preserve the candidate's original details and voice—adjust wording toward JD skills, tools, and responsibilities where supported.
 - DO NOT invent new information
-- Use strong, varied action verbs; avoid repeating the same opening verb on adjacent bullets. Do not invent quantifiable achievements not in the original.
+- Use strong, varied action verbs; avoid repeating the same opening verb on adjacent bullets. Do not invent quantifiable achievements not in the original; **retain every quantifiable figure that is in the original** when you rephrase.
 - Anti-repetition: same global verb-cap as keyword mode—each major bullet opener at most twice across experience + projects; vary phrasing and bullet structure; no copy-paste sentence frames.
 - Impact first: emphasize outcomes and measurable results where the source provides or clearly implies them ($, %, scale, performance, timelines). Never infer or estimate metrics; never keyword-stuff.
 - Prioritize rewrites on the most recent and JD-relevant roles; trim or sharpen low-impact phrasing without removing required entries.
@@ -346,8 +355,8 @@ Rules:
 - Copy the "years" field values EXACTLY as they appear in the original resume (including any month prefixes like "Jan 2020 - Present"). Do not shorten, reformat, or drop months.
 - Calculate and emphasize total relevant experience duration when it matches requirements
 - Do NOT use em dash ("—") anywhere in the writing/output, even if it exists, remove it
-- Quantify impact: increase recruiter-ready evidence by weaving specific numbers into bullets wherever the original resume already provides or strongly implies them (e.g. performance gains, error rates, throughput, headcount, budget, timelines, adoption). Reframe vague lines into outcome + metric when the source supports it. Do not fabricate figures; do not infer “reasonable estimates.” Missing data stays honest (scope without a fake number).
-- Aim for most Experience bullets to include a measurable element when the resume can support it; never invent to reach a quota.
+- Quantify impact: increase recruiter-ready evidence by weaving specific numbers into bullets wherever the original resume already provides or strongly implies them (e.g. performance gains, error rates, throughput, headcount, budget, timelines, adoption). Reframe vague lines into outcome + metric when the source supports it. Do not fabricate figures; do not infer “reasonable estimates.” Where the original had no number, stay qualitative; **where it had a number, keep it**—never delete real metrics to shorten bullets.
+- Aim for most Experience bullets to include a measurable element when the resume can support it; never invent to reach a quota. **Match or exceed the source’s rate of quantified bullets per role** (bullets containing at least one numeric or scale signal).
 - Skills: keep additional.technicalSkills (and related lists) keyword-aligned for ATS—JD-relevant, candidate-qualified terms first, one skill per line, natural readability.
 
 Job Description:
@@ -379,7 +388,7 @@ Do NOT include personalInfo in your output - it will be preserved from the origi
 - JD data: Use the full Job Description below plus the extracted Keywords list for STEP 1; do not ignore them.
 - Scope: Apply the same JD-alignment discipline to personalProjects when project facts support it. For customSections: preserve exact structure, item count, ids, titles, subtitles, and years; improve description text only where the original had content and facts support JD phrasing.
 - Dates: Copy every workExperience (and project) "years" value EXACTLY as in the original resume (including months). Do not shorten or reformat.
-- Metrics: Keep every number, percentage, and metric from the source resume. You may rephrase around them; do not invent new statistics. Do not infer or estimate metrics “for realism.” Target a high share of Experience bullets with measurable results (e.g. toward 70%+) only when the source material honestly supports it—never fabricate to hit a ratio.
+- Metrics: Keep every number, percentage, and metric from the source resume. You may rephrase around them; do not invent new statistics. Do not infer or estimate metrics “for realism.” Target a high share of Experience bullets with measurable results (e.g. toward 70%+) only when the source material honestly supports it—never fabricate to hit a ratio. **Hard rule:** the tailored output for each job must not have fewer bullets containing numeric/scale evidence than a fair rewrite of the original bullets for that job would allow—do not replace metric-heavy bullets with generic duty lines.
 
 You are a senior technical recruiter and resume optimization expert. Your PRIMARY task is to rewrite the Professional Experience section so every bullet aligns with the job description and reads well for both ATS and humans. Updating only the Skills section is NOT acceptable—you must refactor Experience bullets first and thoroughly.
 
@@ -402,7 +411,7 @@ You are a senior technical recruiter and resume optimization expert. Your PRIMAR
 === RECRUITER & ATS ===
 - Incorporate JD keywords naturally (tools, methods, responsibilities); prefer exact matches where truthful for ATS.
 - Bullets: concise (about one to two lines each); outcome and impact first, not duty dumps.
-- Remove or minimize weak filler; keep JSON schema valid and dates unchanged.
+- Remove or minimize weak filler; keep JSON schema valid and dates unchanged. **Numeric outcomes are never “filler”—do not strip them.**
 
 === ANTI-REPETITION (fixes “Repetition” checks) ===
 - Same action verb (or obvious synonym) must not start more than two bullets in the entire resume; scan all workExperience + personalProjects descriptions before finalizing.

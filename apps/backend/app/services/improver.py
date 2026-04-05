@@ -16,6 +16,7 @@ from app.prompts import (
     get_language_name,
 )
 from app.prompts.templates import IMPROVE_RECRUITER_ATS_FRAMEWORK, IMPROVE_SCHEMA_EXAMPLE
+from app.services.refiner import normalize_job_keywords
 from app.schemas import ResumeData, ResumeFieldDiff, ResumeDiffSummary
 
 logger = logging.getLogger(__name__)
@@ -78,10 +79,13 @@ async def extract_job_keywords(job_description: str) -> dict[str, Any]:
     sanitized_jd = _sanitize_user_input(job_description)
     prompt = EXTRACT_KEYWORDS_PROMPT.format(job_description=sanitized_jd)
 
-    return await complete_json(
+    result = await complete_json(
         prompt=prompt,
         system_prompt="You are an expert job description analyzer.",
     )
+    if isinstance(result, dict):
+        return normalize_job_keywords(result)
+    return result
 
 
 _MONTH_PATTERN = re.compile(

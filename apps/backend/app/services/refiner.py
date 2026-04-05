@@ -34,6 +34,42 @@ logger = logging.getLogger(__name__)
 MAX_JD_LENGTH = 2000
 MIN_TRUNCATION_WARNING_LENGTH = 1500
 
+# Longer strings are almost always JD prose, not scannable resume tokens
+MAX_JD_KEYWORD_TOKEN_LEN = 64
+
+# Lowercase only. If JD keyword matches any group member, resume text may satisfy with any member.
+_JD_SYNONYM_GROUPS: tuple[frozenset[str], ...] = (
+    frozenset({"kubernetes", "k8s"}),
+    frozenset({"javascript", "js"}),
+    frozenset({"typescript", "ts"}),
+    frozenset({"machine learning", "ml"}),
+    frozenset({"amazon web services", "aws"}),
+    frozenset({"google cloud platform", "google cloud", "gcp"}),
+    frozenset({"postgresql", "postgres"}),
+    frozenset({"mongodb", "mongo"}),
+    frozenset({"react", "react.js", "reactjs"}),
+    frozenset({"node", "node.js", "nodejs"}),
+    frozenset({"vue", "vue.js", "vuejs"}),
+    frozenset({"angular", "angularjs"}),
+    frozenset({"csharp", "c#"}),
+    frozenset({"c++", "cpp"}),
+    frozenset({".net", "dotnet", "dot net"}),
+    frozenset({"github", "git hub"}),
+    frozenset({"gitlab", "git lab"}),
+    frozenset({"ci/cd", "cicd", "ci cd"}),
+)
+
+
+def _build_jd_synonym_lookup() -> dict[str, frozenset[str]]:
+    lookup: dict[str, frozenset[str]] = {}
+    for group in _JD_SYNONYM_GROUPS:
+        for term in group:
+            lookup[term] = group
+    return lookup
+
+
+_JD_SYNONYM_LOOKUP = _build_jd_synonym_lookup()
+
 
 def _keyword_in_text(keyword: str, text: str) -> bool:
     """Check if keyword exists as a whole word in text.
@@ -46,6 +82,81 @@ def _keyword_in_text(keyword: str, text: str) -> bool:
     # Use word boundaries
     pattern = rf"\b{escaped}\b"
     return bool(re.search(pattern, text.lower()))
+
+
+def _jd_keyword_variants(keyword: str) -> frozenset[str]:
+    """Lowercase token set to scan in resume text for one JD keyword."""
+    k = " ".join(keyword.strip().split()).lower()
+    if not k:
+        return frozenset()
+    if k in _JD_SYNONYM_LOOKUP:
+        return _JD_SYNONYM_LOOKUP[k]
+    return frozenset({k})
+
+
+def resume_matches_jd_keyword(keyword: str, resume_text_lower: str) -> bool:
+    """True if resume contains the JD keyword or a known synonym (word-boundary match)."""
+    for variant in _jd_keyword_variants(keyword):
+        if _keyword_in_text(variant, resume_text_lower):
+            return True
+    return False
+
+
+def normalize_job_keywords(raw: dict[str, Any]) -> dict[str, Any]:
+    """Clean LLM-extracted job keywords: trim, drop prose-length lines, dedupe globally.
+
+    Dedupes case-insensitively with priority required_skills > preferred_skills > keywords.
+    """
+    if not isinstance(raw, dict):
+        return raw
+
+    out = dict(raw)
+    max_len = MAX_JD_KEYWORD_TOKEN_LEN
+
+    def clean_list(key: str) -> list[str]:
+        items = out.get(key)
+        if not isinstance(items, list):
+            return []
+        acc: list[str] = []
+        for x in items:
+            if not isinstance(x, str):
+                continue
+            s = " ".join(x.split())
+            if not s or len(s) > max_len:
+                continue
+            acc.append(s)
+        return acc
+
+    required = clean_list("required_skills")
+    preferred = clean_list("preferred_skills")
+    keywords = clean_list("keywords")
+
+    seen: set[str] = set()
+    req_out: list[str] = []
+    for s in required:
+        low = s.lower()
+        if low not in seen:
+            seen.add(low)
+            req_out.append(s)
+
+    pref_out: list[str] = []
+    for s in preferred:
+        low = s.lower()
+        if low not in seen:
+            seen.add(low)
+            pref_out.append(s)
+
+    kw_out: list[str] = []
+    for s in keywords:
+        low = s.lower()
+        if low not in seen:
+            seen.add(low)
+            kw_out.append(s)
+
+    out["required_skills"] = req_out
+    out["preferred_skills"] = pref_out
+    out["keywords"] = kw_out
+    return out
 
 
 async def refine_resume(
@@ -161,15 +272,21 @@ def analyze_keyword_gaps(
     Returns:
         KeywordGapAnalysis with missing, injectable, and non-injectable keywords
     """
+    jd_norm: dict[str, Any] = (
+        normalize_job_keywords(dict(jd_keywords))
+        if isinstance(jd_keywords, dict)
+        else {}
+    )
+
     # Extract text content from resumes
     tailored_text = _extract_all_text(tailored).lower()
     master_text = _extract_all_text(master).lower()
 
     # Get all keywords from JD
     all_jd_keywords: set[str] = set()
-    all_jd_keywords.update(jd_keywords.get("required_skills", []))
-    all_jd_keywords.update(jd_keywords.get("preferred_skills", []))
-    all_jd_keywords.update(jd_keywords.get("keywords", []))
+    all_jd_keywords.update(jd_norm.get("required_skills", []))
+    all_jd_keywords.update(jd_norm.get("preferred_skills", []))
+    all_jd_keywords.update(jd_norm.get("keywords", []))
 
     # Find missing keywords
     missing: list[str] = []
@@ -177,9 +294,9 @@ def analyze_keyword_gaps(
     non_injectable: list[str] = []
 
     for keyword in all_jd_keywords:
-        if not _keyword_in_text(keyword, tailored_text):
+        if not resume_matches_jd_keyword(keyword, tailored_text):
             missing.append(keyword)
-            if _keyword_in_text(keyword, master_text):
+            if resume_matches_jd_keyword(keyword, master_text):
                 injectable.append(keyword)
             else:
                 non_injectable.append(keyword)
@@ -292,7 +409,7 @@ def validate_master_alignment(
             skill in ms or ms in skill for ms in master_skills if ms
         )
         # Check if skill appears anywhere in master resume text
-        found_in_text = _keyword_in_text(skill, master_full_text)
+        found_in_text = resume_matches_jd_keyword(skill, master_full_text)
 
         if has_substring_match or found_in_text:
             violations.append(
@@ -535,20 +652,27 @@ def calculate_keyword_match(
     Returns:
         Match percentage (0.0 to 100.0)
     """
+    jd_norm: dict[str, Any] = (
+        normalize_job_keywords(dict(jd_keywords))
+        if isinstance(jd_keywords, dict)
+        else {}
+    )
+
     resume_text = _extract_all_text(resume).lower()
 
     all_keywords: set[str] = set()
-    all_keywords.update(jd_keywords.get("required_skills", []))
-    all_keywords.update(jd_keywords.get("preferred_skills", []))
-    all_keywords.update(jd_keywords.get("keywords", []))
+    all_keywords.update(jd_norm.get("required_skills", []))
+    all_keywords.update(jd_norm.get("preferred_skills", []))
+    all_keywords.update(jd_norm.get("keywords", []))
 
     # SVC-009: Return 0% if no keywords (not 100% - that's misleading)
     if not all_keywords:
         logger.warning("No keywords found in job description")
         return 0.0
 
-    # SVC-010: Use word boundary matching instead of substring
-    matched = sum(1 for kw in all_keywords if _keyword_in_text(kw, resume_text))
+    matched = sum(
+        1 for kw in all_keywords if resume_matches_jd_keyword(kw, resume_text)
+    )
     return (matched / len(all_keywords)) * 100
 
 

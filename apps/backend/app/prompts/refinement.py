@@ -144,6 +144,12 @@ CRITICAL RULES:
 4. Maintain the exact same JSON structure
 5. Do not use em-dashes (—) or their variants (---, --)
 
+INJECTION PRIORITY (so ATS-style scans see the literal terms):
+- For each keyword below, ensure the EXACT string (spelling and spacing) appears at least once in the resume JSON text when the master supports it: preferably in a workExperience bullet, else in summary, else append to additional.technicalSkills if that skill already exists in master under a variant.
+- If the master resume already uses a synonym (e.g. master says "K8s" and the keyword is "Kubernetes"), rewrite to include the JD spelling once while keeping truthfulness.
+- Do not keyword-stuff: one natural mention per injected term is enough.
+- **Preserve all existing numbers, percentages, dollar amounts, counts, and durations** in experience and project bullets; do not remove or rewrite away quantified impact when integrating keywords.
+
 Keywords to inject (only if supported by master resume):
 {keywords_to_inject}
 

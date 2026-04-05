@@ -5,7 +5,7 @@ import re
 from enum import Enum
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 _TEXT_VALUE_KEYS = (
     "text",
@@ -107,6 +107,114 @@ def _coerce_string_list(value: Any) -> list[str]:
     return [coerced] if coerced else []
 
 
+def _split_skill_line_segments(text: str) -> list[str]:
+    """Split a resume skills line into tokens (commas, semicolons, pipes, newlines).
+
+    Resumes commonly use "Python, Java, AWS" on one line; without this, the whole
+    line is stored as a single "skill" or appears empty after bad LLM mapping.
+    """
+    normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+    for sep in (",", ";", "|"):
+        normalized = normalized.replace(sep, "\n")
+    items: list[str] = []
+    for line in normalized.split("\n"):
+        cleaned = _BULLET_PREFIX_RE.sub("", line.strip())
+        if cleaned:
+            items.append(cleaned.strip())
+    return items
+
+
+def _coerce_delimited_skill_list(value: Any) -> list[str]:
+    """Coerce technicalSkills: split delimiter-separated strings into many skills."""
+    if value is None:
+        return []
+
+    if isinstance(value, list):
+        out: list[str] = []
+        for entry in value:
+            if isinstance(entry, str):
+                out.extend(_split_skill_line_segments(entry))
+                continue
+            coerced = _coerce_text(entry)
+            if coerced:
+                out.extend(_split_skill_line_segments(coerced))
+        return _dedupe_strings_case_insensitive(out)
+
+    if isinstance(value, str):
+        return _dedupe_strings_case_insensitive(_split_skill_line_segments(value))
+
+    coerced = _coerce_text(value)
+    if not coerced:
+        return []
+    return _dedupe_strings_case_insensitive(_split_skill_line_segments(coerced))
+
+
+def _dedupe_strings_case_insensitive(items: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for x in items:
+        low = x.lower()
+        if low not in seen:
+            seen.add(low)
+            result.append(x)
+    return result
+
+
+def _flatten_skill_input_chunks(chunks: list[Any]) -> list[str]:
+    """Turn mixed list/str skill payloads into raw string lines (before delimiter split)."""
+    flat: list[str] = []
+    for part in chunks:
+        if part is None:
+            continue
+        if isinstance(part, list):
+            for x in part:
+                if isinstance(x, str) and x.strip():
+                    flat.append(x.strip())
+                elif x is not None:
+                    sx = str(x).strip()
+                    if sx:
+                        flat.append(sx)
+        elif isinstance(part, str) and part.strip():
+            flat.append(part.strip())
+        else:
+            sx = str(part).strip()
+            if sx:
+                flat.append(sx)
+    return flat
+
+
+# LLM often emits skills at the root or under customSections; ResumeData only keeps additional.*.
+_ROOT_SKILL_KEYS: tuple[str, ...] = (
+    "skills",
+    "technical_skills",
+    "core_skills",
+    "technologies",
+    "tools",
+    "tech_stack",
+)
+
+
+def _custom_section_key_is_technical_skills(key: str) -> bool:
+    lk = key.lower().replace(" ", "_").replace("-", "_")
+    if lk.startswith("soft_") or "soft_skill" in lk:
+        return False
+    if lk in frozenset(
+        {
+            "skills",
+            "technical_skills",
+            "technologies",
+            "tools",
+            "tech_stack",
+            "core_skills",
+            "tech",
+        }
+    ):
+        return True
+    if "technical" in lk and "skill" in lk:
+        return True
+    return False
+
+
 # Section Type Enum for dynamic sections
 class SectionType(str, Enum):
     """Types of resume sections."""
@@ -187,8 +295,12 @@ class AdditionalInfo(BaseModel):
     certificationsTraining: list[str] = Field(default_factory=list)
     awards: list[str] = Field(default_factory=list)
 
+    @field_validator("technicalSkills", mode="before")
+    @classmethod
+    def _normalize_technical_skills(cls, value: Any) -> list[str]:
+        return _coerce_delimited_skill_list(value)
+
     @field_validator(
-        "technicalSkills",
         "languages",
         "certificationsTraining",
         "awards",
@@ -352,6 +464,61 @@ class ResumeData(BaseModel):
     # NEW: Section metadata and custom sections
     sectionMeta: list[SectionMeta] = Field(default_factory=list)
     customSections: dict[str, CustomSection] = Field(default_factory=dict)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _hoist_skills_into_additional(cls, data: Any) -> Any:
+        """Merge skills from root keys and stringList custom sections into additional.
+
+        The parse LLM often puts skills in `skills` or `customSections.skills` instead
+        of `additional.technicalSkills`, which Pydantic would otherwise drop.
+        """
+        if not isinstance(data, dict):
+            return data
+
+        out = dict(data)
+        chunks: list[Any] = []
+
+        add = out.get("additional")
+        if isinstance(add, dict):
+            add = dict(add)
+            existing = add.get("technicalSkills")
+            if existing not in (None, "", []):
+                chunks.append(existing)
+        else:
+            add = {}
+
+        for key in _ROOT_SKILL_KEYS:
+            if key not in out:
+                continue
+            val = out.pop(key)
+            if val is not None and val != "" and val != []:
+                chunks.append(val)
+
+        cs = out.get("customSections")
+        if isinstance(cs, dict):
+            cs = dict(cs)
+            for ck, section in cs.items():
+                if not isinstance(section, dict):
+                    continue
+                if not _custom_section_key_is_technical_skills(ck):
+                    continue
+                st = section.get("sectionType") or section.get("section_type")
+                st_norm = str(st).replace("_", "").lower() if st is not None else ""
+                if st_norm != "stringlist":
+                    continue
+                strings = section.get("strings")
+                if strings:
+                    chunks.append(strings)
+            out["customSections"] = cs
+
+        if chunks:
+            raw_lines = _flatten_skill_input_chunks(chunks)
+            if raw_lines:
+                add["technicalSkills"] = raw_lines
+
+        out["additional"] = add
+        return out
 
     @field_validator("summary", mode="before")
     @classmethod
