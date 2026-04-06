@@ -61,7 +61,7 @@ updateLanguageConfig(language: string) → LanguageConfig
 
 ```typescript
 export const PROVIDER_INFO = {
-  openai: { name: 'OpenAI', defaultModel: 'gpt-5-nano-2025-08-07', requiresKey: true },
+  openai: { name: 'OpenAI', defaultModel: 'gpt-5.4-2026-03-05', requiresKey: true },
   anthropic: { name: 'Anthropic', defaultModel: 'claude-haiku-4-5-20251001', requiresKey: true },
   openrouter: { name: 'OpenRouter', defaultModel: 'deepseek/deepseek-chat', requiresKey: true },
   gemini: { name: 'Google Gemini', defaultModel: 'gemini-3-flash-preview', requiresKey: true },

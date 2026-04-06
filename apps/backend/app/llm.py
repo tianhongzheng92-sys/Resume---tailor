@@ -388,11 +388,14 @@ def _get_reasoning_effort(provider: str, model: str) -> str | None:
 
     Some OpenAI gpt-5 models may return empty message.content unless a supported
     `reasoning_effort` is explicitly set. This keeps downstream JSON parsing reliable.
+
+    Newer GPT-5 snapshots (e.g. gpt-5.4) reject ``minimal``; supported values include
+    ``none``, ``low``, ``medium``, ``high``, ``xhigh``. We use ``low`` as a light default.
     """
     _ = provider
     model_lower = model.lower()
     if "gpt-5" in model_lower:
-        return "minimal"
+        return "low"
     return None
 
 
@@ -414,7 +417,9 @@ async def check_llm_health(
             "model": config.model,
             "error_code": "api_key_missing",
         }
-
+    print(f"Checking LLM health for {config.provider}/{config.model}")
+    print(f"API key: {config.api_key}")
+    print(f"API base: {config.api_base}")
     model_name = get_model_name(config)
 
     prompt = test_prompt or "Hi"

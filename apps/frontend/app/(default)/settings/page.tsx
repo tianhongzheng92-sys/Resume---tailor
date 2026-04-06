@@ -122,7 +122,7 @@ export default function SettingsPage() {
   const [featureConfigLoading, setFeatureConfigLoading] = useState(false);
   const [promptConfigLoading, setPromptConfigLoading] = useState(false);
   const [promptOptions, setPromptOptions] = useState<PromptOption[]>([]);
-  const [defaultPromptId, setDefaultPromptId] = useState('keywords');
+  const [defaultPromptId, setDefaultPromptId] = useState('other');
 
   // Danger Zone state
   const [showClearApiKeysDialog, setShowClearApiKeysDialog] = useState(false);
@@ -267,7 +267,7 @@ export default function SettingsPage() {
 
         if (promptConfig) {
           setPromptOptions(promptConfig.prompt_options || []);
-          setDefaultPromptId(promptConfig.default_prompt_id || 'keywords');
+          setDefaultPromptId(promptConfig.default_prompt_id || 'other');
         }
 
         setStatus('idle');

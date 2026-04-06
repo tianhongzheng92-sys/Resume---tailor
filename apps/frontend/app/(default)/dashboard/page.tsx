@@ -52,18 +52,56 @@ export default function DashboardPage() {
     return master?.title || master?.filename || parentId.slice(0, 8) || '—';
   };
 
-  /** Parse resume title into job title and company (e.g. "Software Engineer @ Mercor" → jobTitle, company) */
-  const parseTitleAndCompany = (
-    title: string | null | undefined
+  /**
+   * Parse stored tailored resume `title` only (never job-description snippets).
+   * Supports "Role @ Company", "Role @Company", and "Role at Company".
+   */
+  const jobTitleAndCompanyFromStoredTitle = (
+    storedTitle: string | null | undefined,
+    filename: string | null | undefined
   ): { jobTitle: string; company: string } => {
-    const raw = title?.trim() || '';
-    const atIndex = raw.indexOf(' @ ');
-    if (atIndex >= 0) {
+    let raw = (storedTitle || '').trim();
+    if (!raw) {
+      return { jobTitle: (filename || '').trim() || '—', company: '—' };
+    }
+    raw = raw.split(/\r?\n/)[0].trim();
+
+    const atSep = raw.indexOf(' @ ');
+    if (atSep >= 0) {
+      const jt = raw.slice(0, atSep).trim();
+      const co = raw.slice(atSep + 3).trim();
+      return { jobTitle: jt || '—', company: co || '—' };
+    }
+
+    const atFlexible = raw.match(/^(.+?)\s+@\s+(.+)$/);
+    if (atFlexible) {
       return {
-        jobTitle: raw.slice(0, atIndex).trim() || '—',
-        company: raw.slice(atIndex + 3).trim() || '—',
+        jobTitle: atFlexible[1].trim() || '—',
+        company: atFlexible[2].trim() || '—',
       };
     }
+
+    const atWord = /\s+at\s+/i.exec(raw);
+    if (
+      atWord &&
+      atWord.index !== undefined &&
+      atWord.index >= 2 &&
+      atWord.index < raw.length - 3
+    ) {
+      return {
+        jobTitle: raw.slice(0, atWord.index).trim() || '—',
+        company: raw.slice(atWord.index + atWord[0].length).trim() || '—',
+      };
+    }
+
+    if (raw.length > 100) {
+      const first = raw.split(/[.!?](?:\s|$)/)[0]?.trim() || raw.slice(0, 80);
+      return {
+        jobTitle: first.length < raw.length ? `${first}…` : first,
+        company: '—',
+      };
+    }
+
     return { jobTitle: raw || '—', company: '—' };
   };
 
@@ -106,8 +144,7 @@ export default function DashboardPage() {
 
   const filteredTailoredResumes = useMemo(() => {
     const filtered = tailoredResumes.filter((r) => {
-      const fullTitle = r.title || r.jobSnippet || r.filename || '';
-      const { jobTitle, company } = parseTitleAndCompany(fullTitle);
+      const { jobTitle, company } = jobTitleAndCompanyFromStoredTitle(r.title, r.filename);
       const created = r.created_at || '';
 
       if (filterMasterResumeId) {
@@ -670,8 +707,10 @@ export default function DashboardPage() {
                     </tr>
                   ) : (
                     filteredTailoredResumes.map((resume, index) => {
-                      const fullTitle = resume.title || resume.jobSnippet || resume.filename || '';
-                      const { jobTitle, company } = parseTitleAndCompany(fullTitle);
+                      const { jobTitle, company } = jobTitleAndCompanyFromStoredTitle(
+                        resume.title,
+                        resume.filename
+                      );
                       return (
                         <tr
                           key={resume.resume_id}

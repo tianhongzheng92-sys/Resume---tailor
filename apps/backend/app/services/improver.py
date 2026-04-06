@@ -186,7 +186,7 @@ async def improve_resume(
     truthfulness_rules = CRITICAL_TRUTHFULNESS_RULES.get(
         selected_prompt_id, CRITICAL_TRUTHFULNESS_RULES[DEFAULT_IMPROVE_PROMPT_ID]
     )
-
+   
     # LLM-011: Sanitize job description to prevent prompt injection
     sanitized_jd = _sanitize_user_input(job_description)
 
@@ -213,13 +213,6 @@ async def improve_resume(
         output_language=output_language,
         critical_truthfulness_rules=truthfulness_rules,
         recruiter_ats_framework=IMPROVE_RECRUITER_ATS_FRAMEWORK,
-    )
-
-    # Log the full prompt string when generating tailored resume (for debugging)
-    logger.info(
-        "=== GENERATE TAILORED RESUME PROMPT (prompt_id=%s) ===\n%s\n=== END PROMPT ===",
-        selected_prompt_id,
-        prompt,
     )
 
     result = await complete_json(

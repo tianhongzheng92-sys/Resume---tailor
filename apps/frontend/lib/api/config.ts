@@ -124,7 +124,7 @@ export const PROVIDER_INFO: Record<
   LLMProvider,
   { name: string; defaultModel: string; requiresKey: boolean }
 > = {
-  openai: { name: 'OpenAI', defaultModel: 'gpt-5-nano-2025-08-07', requiresKey: true },
+  openai: { name: 'OpenAI', defaultModel: 'gpt-5.4-2026-03-05', requiresKey: true },
   anthropic: { name: 'Anthropic', defaultModel: 'claude-haiku-4-5-20251001', requiresKey: true },
   openrouter: {
     name: 'OpenRouter',

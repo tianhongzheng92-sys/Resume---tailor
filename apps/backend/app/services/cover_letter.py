@@ -98,11 +98,16 @@ async def generate_resume_title(
 
     result = await complete(
         prompt=prompt,
-        system_prompt="You extract job titles and company names from job descriptions.",
+        system_prompt=(
+            "You extract the hiring job title and company from job posts. "
+            "Reply with one line only: 'Role @ Company' or role only. "
+            "Never paste the employer's marketing intro."
+        ),
         max_tokens=60,
         temperature=0.3,
     )
 
-    # Strip quotes and whitespace, truncate to 80 chars
-    title = result.strip().strip("\"'")
-    return title[:80]
+    # One line only; collapse whitespace; strip quotes; cap length for DB/UI
+    line = result.strip().strip("\"'").splitlines()[0].strip()
+    line = " ".join(line.split())
+    return line[:80] if line else ""

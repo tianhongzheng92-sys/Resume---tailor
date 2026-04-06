@@ -123,7 +123,7 @@ The most important setting is your AI provider. Here's a minimal configuration f
 
 ```env
 LLM_PROVIDER=openai
-LLM_MODEL=gpt-5-nano-2025-08-07
+LLM_MODEL=gpt-5.4-2026-03-05
 LLM_API_KEY=sk-your-api-key-here
 
 # Keep these as default for local development
@@ -205,7 +205,7 @@ Resume Matcher supports multiple AI providers. You can configure your provider t
 
 | Provider | Configuration | Get API Key |
 |----------|--------------|-------------|
-| **OpenAI** | `LLM_PROVIDER=openai`<br>`LLM_MODEL=gpt-5-nano-2025-08-07` | [platform.openai.com](https://platform.openai.com/api-keys) |
+| **OpenAI** | `LLM_PROVIDER=openai`<br>`LLM_MODEL=gpt-5.4-2026-03-05` | [platform.openai.com](https://platform.openai.com/api-keys) |
 | **Anthropic** | `LLM_PROVIDER=anthropic`<br>`LLM_MODEL=claude-haiku-4-5-20251001` | [console.anthropic.com](https://console.anthropic.com/) |
 | **Google Gemini** | `LLM_PROVIDER=gemini`<br>`LLM_MODEL=gemini-3-flash-preview` | [aistudio.google.com](https://aistudio.google.com/app/apikey) |
 | **OpenRouter** | `LLM_PROVIDER=openrouter`<br>`LLM_MODEL=deepseek/deepseek-chat` | [openrouter.ai](https://openrouter.ai/keys) |

@@ -157,7 +157,7 @@ Act as a senior technical recruiter and ATS optimization expert.
 
 **Output contract:** Your reply must be ONLY the JSON object matching the schema at the end. Do NOT output: a match score, "Score: X%", numbered reasons, a "Missing Keywords / Gaps" list, markdown section headers such as [Match Score] or [Version A], "---" dividers, or two separate resume versions. The app stores one tailored resume and computes keyword match in the pipeline—never duplicate that in prose.
 
-**Alignment target (honest):** Tune wording so keyword match, skills alignment, experience relevance, and seniority fit would *typically* land in the **70–90%** range when the candidate's real background honestly supports that level of fit. If the resume and JD only partially overlap, preserve truthfulness over score; do not add skills, employers, tools, or metrics to fake alignment.
+**Alignment target (honest):** Tune wording so keyword match, skills alignment, experience relevance, and seniority fit would *typically* land in the 70–90% range when the candidate's real background honestly supports that level of fit. If the resume and JD only partially overlap, preserve truthfulness over score; do not add skills, employers, tools, or metrics to fake alignment.
 
 **One resume, two goals:** Produce a single JSON resume that simultaneously:
 - **ATS track:** Weave important JD keywords naturally; use recognizable tool/stack spellings from the JD when they match real experience; keep lists scannable; avoid stuffing and redundant keyword repetition.
@@ -165,7 +165,48 @@ Act as a senior technical recruiter and ATS optimization expert.
 
 **Tailoring:** Map experience to JD responsibilities and requirements only where the source resume supports it. Prioritize impact over task lists; remove or reduce irrelevant or low-impact content where your mode rules allow. Keep values ATS-friendly plain text (no markdown tables inside strings).
 
-**Metrics:** First, count how many bullets per role already contain numbers or clear scale in the original—your output must **keep that level of quantification** (same or higher share of quantified bullets per job), not zero it out. Aim for a high share (e.g. **70%+**) of bullets with a measurable line **only where the source supports it**—never invent or "estimate" metrics to hit a ratio. Never remove existing %, $, counts, or timelines to sound simpler; rephrase around them if needed. In minimal-edit modes, preserve every figure from the source."""
+**Metrics:** First, count how many bullets per role already contain numbers or clear scale in the original—your output must keep that level of quantification (same or higher share of quantified bullets per job), not zero it out. Aim for a high share (e.g. 70%+) of bullets with a measurable line only where the source supports it—never invent or "estimate" metrics to hit a ratio. Never remove existing %, $, counts, or timelines to sound simpler; rephrase around them if needed. In minimal-edit modes, preserve every figure from the source.
+
+=== SOFT SKILLS ALIGNMENT BOOST (NO FABRICATION) ===
+
+Goal:
+Improve soft skills match rate to align with job description expectations while preserving factual accuracy and avoiding exaggeration.
+
+Instructions:
+- Extract soft skills explicitly or implicitly required in the job description (e.g., collaboration, communication, ownership, leadership, stakeholder management, adaptability, problem-solving).
+- Identify where these soft skills already exist implicitly in the candidate’s experience.
+- Rewrite bullet points to naturally embed these soft skills into existing responsibilities and achievements.
+- Do NOT add new experiences, roles, or claims. Only enhance wording of existing content.
+- Do NOT add soft skills as standalone statements. Always integrate them into achievements or actions.
+
+Embedding patterns (use naturally, not repetitively):
+- Collaborated with cross-functional teams to...
+- Communicated with stakeholders to...
+- Led or mentored team members to...
+- Coordinated with product or design teams to...
+- Drove decision-making by...
+- Improved team efficiency by...
+- Partnered with engineers or clients to...
+
+Constraints:
+- Maintain concise bullet length (1–2 lines)
+- Preserve all existing metrics and quantified data
+- Do not increase verbosity unnecessarily
+- Avoid keyword stuffing or repeating the same soft skill phrasing
+- Ensure variation in sentence structure and verbs
+
+Priority soft skills to emphasize when supported by source:
+- Collaboration
+- Communication
+- Ownership or accountability
+- Leadership or mentorship
+- Problem-solving
+- Adaptability
+- Stakeholder management
+
+Output impact:
+- Increase perceived soft skill alignment for recruiter evaluation
+- Improve ATS keyword matching without compromising readability"""
 
 PARSE_RESUME_PROMPT = """Parse this resume into JSON. Output ONLY the JSON object, no other text.
 
@@ -220,17 +261,12 @@ Job description:
 {job_description}"""
 
 CRITICAL_TRUTHFULNESS_RULES_TEMPLATE = """CRITICAL TRUTHFULNESS RULES - NEVER VIOLATE:
-1. DO NOT add any skill, tool, technology, or certification that is not explicitly mentioned in the original resume
-2. DO NOT invent numeric achievements (e.g., "increased by 30%") unless they exist in original
-3. DO NOT add company names, product names, or technical terms not in the original
-4. DO NOT upgrade experience level (e.g., "Junior" -> "Senior")
-5. DO NOT add languages, frameworks, or platforms the candidate hasn't used
-6. DO NOT extend employment dates or change timelines. Copy date ranges exactly as they appear, including months.
-7. {rule_7}
-8. Preserve factual accuracy - only use information provided by the candidate
-9. NEVER remove existing skills, certifications, languages, or awards. You may reorder by relevance, but every original item must remain.
-10. PRESERVE QUANTIFIED IMPACT FROM THE SOURCE: Do not remove, round away, or replace with vague wording any numeric facts already in the original resume (%, $, counts, ranges, durations, team or user scale, latency, throughput, revenue, adoption figures). When you rewrite bullets, carry those exact values forward in the same role. Keep at least the same proportion of workExperience (and personalProjects) bullets that include a measurable figure as in the source for that employer/project—do not de-quantify for brevity, anti-repetition, or JD alignment. "Do not invent metrics" means never add false numbers; it does NOT mean strip real ones.
-
+1. DO NOT invent numeric achievements (e.g., "increased by 30%") unless they exist in original
+2. DO NOT add company names, product names, or technical terms not in the original
+3. DO NOT add languages, frameworks, or platforms the candidate hasn't used
+4. DO NOT extend employment dates or change timelines. Copy date ranges exactly as they appear, including months.
+5. Preserve factual accuracy - only use information provided by the candidate
+6. Avoid repeating action verbs and phrases on your resume
 Violation of these rules could cause serious problems for the candidate in job interviews.
 """
 
@@ -302,18 +338,13 @@ Do NOT include personalInfo in your output - it will be preserved from the origi
 
 Rules:
 - Act as a senior technical recruiter and resume optimization expert (within the truthfulness rules above). Goal: strong alignment to the job description and ATS-friendly wording without sounding robotic.
-- Strengthen alignment by weaving in relevant keywords where evidence already exists; use exact JD spellings for tools and terms when they match real experience—natural prose, not keyword stuffing or repeated filler.
 - Align bullets with JD-required skills, tools, and responsibilities only where the resume supports them; emphasize recent and most relevant roles first in how you rephrase (keep section order unless reordering bullets within a role improves relevance).
 - Strong, varied action verbs; avoid repeating the same opening verb across adjacent bullets.
 - Anti-repetition (common “Repetition” score failure): across ALL workExperience and personalProjects bullets combined, each major opening verb (e.g. developed, built, led, designed, implemented, managed, delivered, optimized, automated, streamlined, executed, used) may appear at most twice as the first word of a bullet—use synonyms and different sentence shapes. Do not reuse the same multi-word template or clause opener across bullets unless it is a proper noun or tool name.
 - Impact over duties: lead bullets with outcomes the source supports; keep each bullet concise (about one or two lines of text).
 - Tighten or shorten low-relevance wording; do not delete required structure (same bullet counts per truthfulness rules).
 - You may rephrase bullet points to include keyword phrasing
-- Do NOT introduce new skills, tools, or certifications not in the resume
-- Do NOT change role, industry, or seniority level
 - For customSections: preserve exact structure, item count, titles, subtitles, and years. If an item's description is an empty array [] in the original, keep it empty []. Do NOT generate descriptions for items that had none.
-- Copy the "years" field values EXACTLY as they appear in the original resume (including any month prefixes like "Jan 2020 - Present"). Do not shorten, reformat, or drop months.
-- If resume is non-technical, keep language non-technical while still aligning keywords
 - Do NOT use em dash ("—") anywhere in the writing/output, even if it exists, remove it
 - Skills: One skill per line (vertical list, no commas). Include all JD-relevant skills the candidate is qualified for.
 - Quantify impact: rewrite weaker bullets so they lead with or include concrete metrics where the resume already supports them (percentages, counts, team size, latency, savings, users, release cadence, data volume, duration). Make implicit scale explicit when it is clearly grounded in the original text. Never invent statistics; do not infer or estimate numbers to “fill in” gaps—where the source had no metric, keep qualitative wording; **where the source had a metric, you must keep it** (do not drop numbers to avoid guessing).
@@ -375,55 +406,57 @@ Output in this JSON format:
 
 
 IMPROVE_RESUME_PROMPT_OTHER = """Tailor this resume for the job. Output ONLY the JSON object, no other text.
-
 {critical_truthfulness_rules}
 
 {recruiter_ats_framework}
-
 IMPORTANT: Generate ALL text content (summary, descriptions, skills) in {output_language}.
 Do NOT include personalInfo in your output - it will be preserved from the original resume.
 
-=== CLARITY (read this—resolves common confusion) ===
-- Output format: Valid JSON matching the schema at the end only. Field workExperience[].description is an array of bullet strings (that is your "Professional Experience" body). "Plain text" means: normal sentences inside those strings—no markdown, no "---" dividers, no literal section labels like "Summary:" inside a bullet.
-- JD data: Use the full Job Description below plus the extracted Keywords list for STEP 1; do not ignore them.
-- Scope: Apply the same JD-alignment discipline to personalProjects when project facts support it. For customSections: preserve exact structure, item count, ids, titles, subtitles, and years; improve description text only where the original had content and facts support JD phrasing.
-- Dates: Copy every workExperience (and project) "years" value EXACTLY as in the original resume (including months). Do not shorten or reformat.
-- Metrics: Keep every number, percentage, and metric from the source resume. You may rephrase around them; do not invent new statistics. Do not infer or estimate metrics “for realism.” Target a high share of Experience bullets with measurable results (e.g. toward 70%+) only when the source material honestly supports it—never fabricate to hit a ratio. **Hard rule:** the tailored output for each job must not have fewer bullets containing numeric/scale evidence than a fair rewrite of the original bullets for that job would allow—do not replace metric-heavy bullets with generic duty lines.
+=== OUTPUT & SCOPE (JSON—read first) ===
+- Your output is valid JSON only (schema at the end). Field `workExperience[].description` is an array of bullet strings: that is the Professional Experience body. `summary` is a single string. `additional.technicalSkills` is the Skills list.
+- **You must change Professional Experience bullets, not only the summary.** A result that rewrites summary (and maybe skills) but leaves `workExperience[].description` mostly unchanged is a failure. Refactor every role's bullets per the rules below.
+- Plain text inside those JSON strings only: no markdown, no "---" dividers, no section headers like "Summary:" or "Professional Experience:" inside a bullet.
+- Use the full Job Description plus the Keywords list for STEP 1; do not ignore them.
+- Apply the same JD-alignment discipline to `personalProjects` when project facts support it. For `customSections`: preserve exact structure, item count, ids, titles, subtitles, and years; improve description text only where the original had content and facts support JD phrasing.
+- Copy every workExperience (and project) `years` value EXACTLY from the original (including months). Do not shorten or reformat.
+- **Metrics (truthfulness):** Preserve every number, percentage, and metric from the source for that role. You may rephrase around them; never invent or estimate to sound stronger. Aim for **at least ~75%** of workExperience bullets across the resume to include a measurable signal (number, %, range, team/user scale, duration, frequency, throughput) **when the source material for that role honestly supports that density**—never fabricate to hit the ratio; use concrete non-numeric scope where no figure exists. Do not replace metric-heavy bullets with vague duty lines.
 
-You are a senior technical recruiter and resume optimization expert. Your PRIMARY task is to rewrite the Professional Experience section so every bullet aligns with the job description and reads well for both ATS and humans. Updating only the Skills section is NOT acceptable—you must refactor Experience bullets first and thoroughly.
+You are a world-class technical resume assistant. Your PRIMARY task is to rewrite the Professional Experience section so every bullet aligns with the job description. Updating only the Skills section (or only the summary) is NOT acceptable—you must refactor Experience bullets first and thoroughly.
 
 === STEP 1: EXTRACT FROM JOB DESCRIPTION ===
 - From the JD, extract exactly: (a) primary/required skills and technologies, (b) key responsibilities and verbs, (c) tools, frameworks, and methodologies. Use this list to drive all Experience rewrites—do not rely on the base resume wording alone.
 
-=== MANDATORY: PROFESSIONAL EXPERIENCE (workExperience) ===
-- You MUST replace (not keep) the bullet text for every job, especially recent/current roles. Recent roles must be rewritten so bullets explicitly reflect the JD's primary and required skills using only tools/outcomes the original resume supports.
-- For each Experience bullet: use JD phrasing where it honestly describes the candidate's work. Map background to what the JD asks for; if an original bullet cannot be tied to the JD, replace it with one that can—without adding false tools or employers.
-- Each job must have 5–6 bullets where the source material allows; each bullet at least 20 words when possible. Add bullets only to cover JD themes already grounded in that role's original content. Prioritize recent/current roles.
-- Preserve ONLY: company names, job titles, and dates (years strings exactly). All bullet text should be revised for JD alignment; default is replace, not keep.
-- Use distinct action verbs; use exact tech names from the JD only when they appear in or are clearly equivalent to the candidate's stack in the original resume.
+=== MANDATORY: PROFESSIONAL EXPERIENCE (`workExperience`) ===
+- You MUST replace (not keep) the bullet text for every job, especially recent/current roles. Recent roles must be rewritten so bullets explicitly reflect the JD's primary and required skills **using only tools, outcomes, and employers the original resume supports** (truthfulness rules override literal JD tools the candidate never used).
+- For each Experience bullet: use JD-aligned phrasing and outcome language where it honestly describes the candidate's work. Map background to what the JD asks for; if an original bullet is generic or misses a JD theme you can support from that role's facts, replace it with one that does—without adding false tools, companies, or metrics.
+- When the JD names a skill or tool, prefer that exact term **only if** it appears in or is clearly equivalent to the candidate's stack in the original resume; otherwise use honest wording from the source.
+- Each job must have **5–6 bullets** where the source material allows; each bullet **at least ~20 words** when possible. Add bullets only to cover JD themes grounded in that role's original content. Prioritize recent/current roles for the strongest alignment.
+- Preserve ONLY: company names, job titles, and dates (`years` strings exactly). All bullet text must be revised for JD alignment; default is **replace**, not keep.
+- Use **unique opening action verbs** per bullet; lead with outcomes. Include preserved or clearly implied numbers/percentages from the source; do not add new ones.
 
 === OTHER SECTIONS ===
-- Summary: Short, keyword-aware, natural readability; mirror top JD themes the candidate can claim.
-- Skills (additional.technicalSkills etc.): ATS-oriented list—one skill per line (vertical list, no commas); JD-relevant, qualified terms first; exact spellings from the JD where they match real skills; no stuffing.
-- Education: Keep as-is unless the JD emphasizes specific degrees/certifications already on the resume.
-- No vague buzzwords (e.g. results-driven, team player, adept at).
+- **Summary:** Integrate the top skills and requirements from the JD that the candidate can truthfully claim; keep it keyword-aware but natural and readable.
+- **Skills** (`additional.technicalSkills`, etc.): One skill per line (vertical list in the array, no comma-separated mega-strings). Include all JD-relevant skills the candidate is qualified for; exact JD spellings where they match real skills; no stuffing.
+- **Education:** Keep as-is unless the JD emphasizes specific degrees/certifications already on the resume.
+- No vague buzzwords (e.g. results-driven, team player, adept at). No "---" or fake section separators inside JSON values.
 
 === RECRUITER & ATS ===
-- Incorporate JD keywords naturally (tools, methods, responsibilities); prefer exact matches where truthful for ATS.
-- Bullets: concise (about one to two lines each); outcome and impact first, not duty dumps.
-- Remove or minimize weak filler; keep JSON schema valid and dates unchanged. **Numeric outcomes are never “filler”—do not strip them.**
+- Weave JD keywords naturally (tools, methods, responsibilities); prefer exact matches where truthful for ATS.
+- Bullets: about one to two lines each where possible; outcome and impact first, not duty dumps.
+- Remove weak filler only; **numeric outcomes are never filler—do not strip them.**
 
-=== ANTI-REPETITION (fixes “Repetition” checks) ===
-- Same action verb (or obvious synonym) must not start more than two bullets in the entire resume; scan all workExperience + personalProjects descriptions before finalizing.
+=== ANTI-REPETITION (mandatory) ===
+- **Global verb cap:** No opening action verb (e.g. developed, led, built, designed, implemented, managed, delivered, optimized, automated, streamlined) may appear more than **twice** as the first word of any bullet across **all** workExperience + personalProjects descriptions combined. Scan the full resume before finalizing.
+- **Adjacency:** Never start two consecutive bullets (within the same job or across jobs) with the same verb or an obvious synonym.
 - Do not reuse identical or near-identical sentence scaffolds across bullets; each line should read distinct (except shared proper nouns / stack names).
-- technicalSkills: reorder for JD relevance only; keep every distinct skill from the source—do not drop items to “dedupe”; avoid repeating the same skill string on multiple consecutive lines when editing.
+- **technicalSkills:** Reorder for JD relevance only; keep every distinct skill from the source; do not drop items to dedupe; avoid repeating the same skill on consecutive lines.
 
 === STYLE ===
-- Each Experience bullet must read differently from the base resume and reflect JD language where truthful.
-- Banned vague phrases: "results-driven", "proven track record", "team player", "adept at", "meticulous", "dynamic". Be specific.
-- Quantify impact (recruiter standard): prioritize bullets that combine a strong verb with a measurable signal. Rewrite thin bullets so they include numbers, percentages, ranges, team or user scale, frequency, or duration when those facts exist in the source resume or are clearly grounded in the original text. Aim for the majority of Experience bullets to carry at least one concrete quant (same honesty rules as above—no invented metrics).
-- Action verb rule: No single opening verb (e.g. developed, led, built, designed, implemented, managed, delivered, optimized) more than twice in the entire resume. Do not use the same or a near-synonym verb to start two adjacent bullets.
-- Do NOT use em dash ("—") anywhere in the writing/output, even if it exists, remove it
+- Each Experience bullet must read **differently** from the base resume and reflect JD language and keywords where truthful.
+- Banned vague or buzzwordy phrasing—be concise and specific: e.g. avoid "results-driven", "proven track record", "team player", "adept at", "meticulous", "dynamic". Use concrete achievements and skills from the source.
+- **Quantify:** Preserve all original numbers, percentages, and metrics. Surface clearly implied scale from the source where no digit exists. Target **≥75%** of Experience bullets with a measurable line only when honest given the source; never invent to reach the target.
+- **Action verbs:** Start each bullet with a strong, distinct action verb; respect the global twice-max and no-adjacent-synonym rules above.
+- Do NOT use em dash ("—") anywhere in the output, even if present in the source (use commas or periods).
 
 Job Description:
 {job_description}
@@ -457,7 +490,7 @@ IMPROVE_PROMPT_OPTIONS = [
     {
         "id": "other",
         "label": "Deep JD align",
-        "description": "Heavy experience rewrites toward the JD; unique verbs; strict honesty limits.",
+        "description": "Rewrites all experience bullets to the JD (include summary); quantify + anti-repetition; strict honesty.",
     },
 ]
 
@@ -468,7 +501,7 @@ IMPROVE_RESUME_PROMPTS = {
     "other": IMPROVE_RESUME_PROMPT_OTHER,
 }
 
-DEFAULT_IMPROVE_PROMPT_ID = "keywords"
+DEFAULT_IMPROVE_PROMPT_ID = "other"
 
 # Backward-compatible alias
 IMPROVE_RESUME_PROMPT = IMPROVE_RESUME_PROMPT_FULL
@@ -519,7 +552,7 @@ Guidelines:
 
 Output plain text only. No JSON, no markdown formatting."""
 
-GENERATE_TITLE_PROMPT = """Extract the job title and company name from this job description.
+GENERATE_TITLE_PROMPT = """Extract the JOB TITLE and COMPANY hiring for that role from the posting.
 
 IMPORTANT: Write in {output_language}.
 
@@ -527,13 +560,13 @@ Job Description:
 {job_description}
 
 Rules:
-- Format: "Role @ Company" (e.g., "Senior Frontend Engineer @ Stripe")
-- If the company name is not found, return just the role (e.g., "Senior Frontend Engineer")
-- Maximum 60 characters
-- Use the most specific role title mentioned
-- Do not add any other text, quotes, or formatting
+- IGNORE marketing blurbs, "About us", "We believe", "Join our team" story paragraphs, and boilerplate. Find the actual position name (often near the top or after a "Job title" / "Position" label).
+- Output EXACTLY ONE LINE in this format: "Role @ Company" (e.g. "Senior Frontend Engineer @ Stripe"). Use ASCII @ with one space on each side.
+- If the employer name is unclear, output role only: "Senior Frontend Engineer" (no @, no extra words).
+- Role = short job title (a few words), not a full sentence. Company = legal or brand hiring name only (one to four words typical), not a tagline.
+- Maximum 60 characters for the whole line. No quotes, no bullets, no newlines, no second sentence.
 
-Output the title only, nothing else."""
+Output the single title line only, nothing else."""
 
 # Alias for backward compatibility
 RESUME_SCHEMA = RESUME_SCHEMA_EXAMPLE

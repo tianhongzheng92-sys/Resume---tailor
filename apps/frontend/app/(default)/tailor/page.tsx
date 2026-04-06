@@ -33,7 +33,7 @@ export default function TailorPage() {
   const [masterResumeId, setMasterResumeId] = useState<string | null>(null);
   const [masterResumes, setMasterResumes] = useState<ResumeListItem[]>([]);
   const [promptOptions, setPromptOptions] = useState<PromptOption[]>([]);
-  const [selectedPromptId, setSelectedPromptId] = useState('keywords');
+  const [selectedPromptId, setSelectedPromptId] = useState('other');
   const [promptLoading, setPromptLoading] = useState(false);
   const hasUserSelectedPrompt = useRef(false);
   const missingDiffConfirmInFlight = useRef(false);
@@ -185,7 +185,7 @@ export default function TailorPage() {
         if (!cancelled) {
           setPromptOptions(config.prompt_options || []);
           if (!hasUserSelectedPrompt.current) {
-            setSelectedPromptId(config.default_prompt_id || 'keywords');
+            setSelectedPromptId(config.default_prompt_id || 'other');
           }
         }
       } catch (err) {

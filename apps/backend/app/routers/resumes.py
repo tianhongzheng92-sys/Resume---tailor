@@ -982,6 +982,7 @@ async def improve_resume_confirm_endpoint(
     try:
         improved_data = request.improved_data.model_dump()
         improved_text = json.dumps(improved_data, indent=2)
+        print(f"Improved data: {improved_text}")
         # NOTE: This endpoint relies on preview-hash validation to ensure the payload matches a prior preview.
         # Stronger guarantees would require server-side preview storage or re-running the improvement.
         try:
