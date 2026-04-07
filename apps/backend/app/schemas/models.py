@@ -578,6 +578,8 @@ class ResumeSummary(BaseModel):
     created_at: str
     updated_at: str
     title: str | None = None
+    # Job posting page URL (tailored resumes only), from linked job record
+    job_source_url: str | None = None
 
 
 class ResumeListResponse(BaseModel):
@@ -593,6 +595,7 @@ class TailoredResumeJobDescription(BaseModel):
     resume_id: str
     job_id: str = ""
     content: str = ""
+    source_url: str | None = None
 
 
 class TailoredJobDescriptionsByParentResponse(BaseModel):
@@ -607,7 +610,21 @@ class JobUploadRequest(BaseModel):
     """Request to upload job descriptions."""
 
     job_descriptions: list[str]
+    source_urls: list[str | None] | None = Field(
+        default=None,
+        description="Optional posting URLs; must match job_descriptions length when set.",
+    )
     resume_id: str | None = None
+
+    @model_validator(mode="after")
+    def _source_urls_length_matches(self) -> "JobUploadRequest":
+        if self.source_urls is None:
+            return self
+        if len(self.source_urls) != len(self.job_descriptions):
+            raise ValueError(
+                "source_urls must be the same length as job_descriptions when provided"
+            )
+        return self
 
 
 class JobUploadResponse(BaseModel):

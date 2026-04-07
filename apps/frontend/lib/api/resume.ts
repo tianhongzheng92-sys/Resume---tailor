@@ -105,6 +105,8 @@ export interface ResumeListItem {
   created_at: string;
   updated_at: string;
   title?: string | null;
+  /** Job posting URL from backend (tailored resumes only) */
+  job_source_url?: string | null;
   // Optional lightweight snippet of associated job description (populated client-side)
   jobSnippet?: string;
 }
@@ -138,12 +140,24 @@ async function postImprove(
 /** Uploads job descriptions and returns a job_id */
 export async function uploadJobDescriptions(
   descriptions: string[],
-  resumeId: string
+  resumeId: string,
+  sourceUrls?: (string | null | undefined)[]
 ): Promise<string> {
-  const res = await apiPost('/jobs/upload', {
+  const body: Record<string, unknown> = {
     job_descriptions: descriptions,
     resume_id: resumeId,
-  });
+  };
+  if (
+    sourceUrls !== undefined &&
+    sourceUrls.length === descriptions.length
+  ) {
+    body.source_urls = descriptions.map((_, i) => {
+      const u = sourceUrls[i];
+      const s = typeof u === 'string' ? u.trim() : '';
+      return s ? s : null;
+    });
+  }
+  const res = await apiPost('/jobs/upload', body);
   if (!res.ok) throw new Error(`Upload failed with status ${res.status}`);
   const data = await res.json();
   return data.job_id[0];
@@ -365,16 +379,23 @@ export async function retryProcessing(resumeId: string): Promise<ResumeUploadRes
 }
 
 /** In-memory cache: avoids duplicate GET /job-description (tailor load, dashboard, strict mode). */
-const jobDescriptionCache = new Map<string, { job_id: string; content: string }>();
-const jobDescriptionInflight = new Map<string, Promise<{ job_id: string; content: string }>>();
+const jobDescriptionCache = new Map<
+  string,
+  { job_id: string; content: string; source_url?: string }
+>();
+const jobDescriptionInflight = new Map<
+  string,
+  Promise<{ job_id: string; content: string; source_url?: string }>
+>();
 
 function primeJobDescriptionCache(
-  entries: Array<{ resume_id: string; job_id?: string; content?: string }>
+  entries: Array<{ resume_id: string; job_id?: string; content?: string; source_url?: string }>
 ): void {
   for (const row of entries) {
     jobDescriptionCache.set(row.resume_id, {
       job_id: row.job_id ?? '',
       content: row.content ?? '',
+      ...(row.source_url?.trim() ? { source_url: row.source_url.trim() } : {}),
     });
   }
 }
@@ -382,7 +403,7 @@ function primeJobDescriptionCache(
 /** Batch-load job descriptions for all tailored resumes under a master (one HTTP request). */
 export async function fetchJobDescriptionsByParent(
   parentResumeId: string
-): Promise<Record<string, { job_id: string; content: string }>> {
+): Promise<Record<string, { job_id: string; content: string; source_url?: string }>> {
   const res = await apiFetch(
     `/resumes/job-descriptions/by-parent?parent_id=${encodeURIComponent(parentResumeId)}`
   );
@@ -391,15 +412,16 @@ export async function fetchJobDescriptionsByParent(
     throw new Error(`Failed to fetch job descriptions (status ${res.status}): ${text}`);
   }
   const payload = (await res.json()) as {
-    data: Array<{ resume_id: string; job_id?: string; content?: string }>;
+    data: Array<{ resume_id: string; job_id?: string; content?: string; source_url?: string }>;
   };
   const list = payload.data ?? [];
   primeJobDescriptionCache(list);
-  const map: Record<string, { job_id: string; content: string }> = {};
+  const map: Record<string, { job_id: string; content: string; source_url?: string }> = {};
   for (const row of list) {
     map[row.resume_id] = {
       job_id: row.job_id ?? '',
       content: row.content ?? '',
+      ...(row.source_url?.trim() ? { source_url: row.source_url.trim() } : {}),
     };
   }
   return map;
@@ -408,7 +430,7 @@ export async function fetchJobDescriptionsByParent(
 /** Fetches the job description used to tailor a resume */
 export async function fetchJobDescription(
   resumeId: string
-): Promise<{ job_id: string; content: string }> {
+): Promise<{ job_id: string; content: string; source_url?: string }> {
   const cached = jobDescriptionCache.get(resumeId);
   if (cached) {
     return { ...cached };
@@ -423,9 +445,18 @@ export async function fetchJobDescription(
       const text = await res.text().catch(() => '');
       throw new Error(`Failed to fetch job description (status ${res.status}): ${text}`);
     }
-    const data = (await res.json()) as { job_id: string; content: string };
-    jobDescriptionCache.set(resumeId, data);
-    return data;
+    const data = (await res.json()) as {
+      job_id: string;
+      content: string;
+      source_url?: string;
+    };
+    const normalized = {
+      job_id: data.job_id,
+      content: data.content,
+      ...(data.source_url?.trim() ? { source_url: data.source_url.trim() } : {}),
+    };
+    jobDescriptionCache.set(resumeId, normalized);
+    return normalized;
   })();
   jobDescriptionInflight.set(resumeId, inflight);
   try {

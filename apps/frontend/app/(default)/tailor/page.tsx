@@ -4,6 +4,7 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { useResumePreview } from '@/components/common/resume_previewer_context';
 import type { ImprovedResult } from '@/components/common/resume_previewer_context';
@@ -15,6 +16,11 @@ import {
   fetchResumeList,
   fetchJobDescriptionsByParent,
 } from '@/lib/api/resume';
+import {
+  clearResumeListCache,
+  getResumeListCache,
+  setResumeListCache,
+} from '@/lib/resume-list-cache';
 import type { ResumeListItem } from '@/lib/api/resume';
 import { fetchPromptConfig, type PromptOption } from '@/lib/api/config';
 import { Dropdown } from '@/components/ui/dropdown';
@@ -24,10 +30,12 @@ import { useTranslations } from '@/lib/i18n';
 import { DiffPreviewModal } from '@/components/tailor/diff-preview-modal';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { calculateJdKeywordOverlap, extractKeywords } from '@/lib/utils/keyword-matcher';
+import { normalizeJobPostingUrl } from '@/lib/utils/job-posting-url';
 
 export default function TailorPage() {
   const { t } = useTranslations();
   const [jobDescription, setJobDescription] = useState('');
+  const [jobPostingUrl, setJobPostingUrl] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [masterResumeId, setMasterResumeId] = useState<string | null>(null);
@@ -65,10 +73,13 @@ export default function TailorPage() {
     jobTitle: string;
     company: string;
     createdAt: string;
+    duplicateByUrl?: boolean;
+    matchedUrl?: string;
   } | null>(null);
   const [pendingGenerate, setPendingGenerate] = useState<{
     resumeId: string;
     description: string;
+    postingUrl: string;
   } | null>(null);
 
   /** Past tailored resumes for selected master + fetched JD text (for keyword comparison). */
@@ -98,7 +109,12 @@ export default function TailorPage() {
       typeof window !== 'undefined' ? localStorage.getItem('master_resume_id') : null;
 
     const resolve = async () => {
-      const list = await fetchResumeList(true);
+      let list = getResumeListCache();
+      if (!list) {
+        list = await fetchResumeList(true);
+        if (cancelled) return;
+        setResumeListCache(list);
+      }
       if (cancelled) return;
       const masters = list.filter((r) => r.is_master);
       setMasterResumes(masters);
@@ -141,7 +157,12 @@ export default function TailorPage() {
     const loadPastJds = async () => {
       setJdCompareLoading(true);
       try {
-        const list = await fetchResumeList(true);
+        let list = getResumeListCache();
+        if (!list) {
+          list = await fetchResumeList(true);
+          if (cancelled) return;
+          setResumeListCache(list);
+        }
         if (cancelled) return;
         const related = list.filter((r) => !r.is_master && r.parent_id === masterResumeId);
         setPastTailoredForMaster(related);
@@ -369,13 +390,45 @@ export default function TailorPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- extractTitleCompanyFromDescription is pure
   }, [debouncedJobDescription]);
 
-  const findDuplicateResume = async (resumeId: string, description: string) => {
+  const findDuplicateResume = async (
+    resumeId: string,
+    description: string,
+    postingUrlRaw: string
+  ) => {
     const normalizedDescription = normalizeText(description);
     if (!normalizedDescription) return null;
 
-    const list = await fetchResumeList(true);
+    let list = getResumeListCache();
+    if (!list) {
+      list = await fetchResumeList(true);
+      setResumeListCache(list);
+    }
     const relatedTailored = list.filter((item) => !item.is_master && item.parent_id === resumeId);
     if (relatedTailored.length === 0) return null;
+
+    const normIncomingUrl = normalizeJobPostingUrl(postingUrlRaw);
+    if (normIncomingUrl) {
+      const urlMatches = relatedTailored.filter((item) => {
+        const stored = item.job_source_url;
+        if (!stored?.trim()) return false;
+        return normalizeJobPostingUrl(stored) === normIncomingUrl;
+      });
+      const urlDup = [...urlMatches].sort(
+        (a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()
+      )[0];
+      if (urlDup) {
+        const fullTitle = urlDup.title || urlDup.filename || '';
+        const { jobTitle, company } = parseTitleAndCompany(fullTitle);
+        return {
+          resumeId: urlDup.resume_id,
+          jobTitle,
+          company,
+          createdAt: formatDateTime(urlDup.created_at || ''),
+          duplicateByUrl: true,
+          matchedUrl: urlDup.job_source_url?.trim() || postingUrlRaw.trim(),
+        };
+      }
+    }
 
     const extracted = extractTitleCompanyFromDescription(description);
     const matches = relatedTailored.filter((item) => {
@@ -434,6 +487,7 @@ export default function TailorPage() {
     const confirmed = await confirmImproveResume(buildConfirmPayload(result));
     incrementImprovements();
     incrementResumes();
+    clearResumeListCache();
     setImprovedData(confirmed);
 
     const newResumeId = confirmed?.data?.resume_id;
@@ -452,11 +506,16 @@ export default function TailorPage() {
     return null;
   };
 
-  const runGenerate = async (resumeId: string, description: string) => {
+  const runGenerate = async (resumeId: string, description: string, postingUrl: string) => {
     try {
       // 1. Upload Job Description
       // The API expects an array of strings
-      const jobId = await uploadJobDescriptions([description], resumeId);
+      const trimmedUrl = postingUrl.trim();
+      const jobId = await uploadJobDescriptions(
+        [description],
+        resumeId,
+        trimmedUrl ? [trimmedUrl] : undefined
+      );
       incrementJobs(); // Update cached counter
 
       // 2. Preview Resume
@@ -509,17 +568,22 @@ export default function TailorPage() {
       return;
     }
     const resumeId = masterResumeId;
+    const trimmedUrl = jobPostingUrl.trim();
     setIsLoading(true);
     setError(null);
     try {
-      const duplicate = await findDuplicateResume(resumeId, trimmedDescription);
+      const duplicate = await findDuplicateResume(resumeId, trimmedDescription, trimmedUrl);
       if (duplicate) {
-        setPendingGenerate({ resumeId, description: trimmedDescription });
+        setPendingGenerate({
+          resumeId,
+          description: trimmedDescription,
+          postingUrl: trimmedUrl,
+        });
         setDuplicateInfo(duplicate);
         setShowDuplicateDialog(true);
         return;
       }
-      await runGenerate(resumeId, trimmedDescription);
+      await runGenerate(resumeId, trimmedDescription, trimmedUrl);
     } finally {
       setIsLoading(false);
     }
@@ -531,7 +595,11 @@ export default function TailorPage() {
     setIsLoading(true);
     setError(null);
     try {
-      await runGenerate(pendingGenerate.resumeId, pendingGenerate.description);
+      await runGenerate(
+        pendingGenerate.resumeId,
+        pendingGenerate.description,
+        pendingGenerate.postingUrl
+      );
     } finally {
       setPendingGenerate(null);
       setDuplicateInfo(null);
@@ -619,10 +687,11 @@ export default function TailorPage() {
       return;
     }
     const resumeId = masterResumeId;
+    const trimmedUrl = jobPostingUrl.trim();
     setIsLoading(true);
     setError(null);
     try {
-      await runGenerate(resumeId, trimmedDescription);
+      await runGenerate(resumeId, trimmedDescription, trimmedUrl);
     } finally {
       setIsLoading(false);
     }
@@ -740,6 +809,23 @@ export default function TailorPage() {
             description={t('tailor.promptDescription')}
             disabled={isLoading || promptLoading}
           />
+
+          <div className="space-y-1">
+            <label className="block font-mono text-xs font-bold uppercase text-gray-700">
+              {t('tailor.jobPostingUrlLabel')}
+            </label>
+            <Input
+              type="text"
+              inputMode="url"
+              autoComplete="url"
+              placeholder={t('tailor.jobPostingUrlPlaceholder')}
+              value={jobPostingUrl}
+              onChange={(e) => setJobPostingUrl(e.target.value)}
+              disabled={isLoading}
+              className="rounded-none border-2 border-black bg-[#F0F0E8] font-mono text-sm"
+            />
+            <p className="font-mono text-[11px] text-gray-600">{t('tailor.jobPostingUrlHint')}</p>
+          </div>
 
           <div className="relative">
             <Textarea
@@ -927,11 +1013,20 @@ export default function TailorPage() {
           }
         }}
         title={t('tailor.duplicateDialog.title')}
-        description={t('tailor.duplicateDialog.description', {
-          jobTitle: duplicateInfo?.jobTitle || '—',
-          company: duplicateInfo?.company || '—',
-          createdAt: duplicateInfo?.createdAt || t('common.unknown'),
-        })}
+        description={
+          duplicateInfo?.duplicateByUrl
+            ? t('tailor.duplicateDialog.descriptionByUrl', {
+                url: duplicateInfo.matchedUrl || '—',
+                jobTitle: duplicateInfo.jobTitle || '—',
+                company: duplicateInfo.company || '—',
+                createdAt: duplicateInfo.createdAt || t('common.unknown'),
+              })
+            : t('tailor.duplicateDialog.description', {
+                jobTitle: duplicateInfo?.jobTitle || '—',
+                company: duplicateInfo?.company || '—',
+                createdAt: duplicateInfo?.createdAt || t('common.unknown'),
+              })
+        }
         confirmLabel={t('tailor.duplicateDialog.continueLabel')}
         cancelLabel={t('common.cancel')}
         variant="warning"

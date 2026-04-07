@@ -20,6 +20,7 @@ import Plus from 'lucide-react/dist/esm/icons/plus';
 import History from 'lucide-react/dist/esm/icons/history';
 import Settings from 'lucide-react/dist/esm/icons/settings';
 import AlertTriangle from 'lucide-react/dist/esm/icons/alert-triangle';
+import Trash2 from 'lucide-react/dist/esm/icons/trash-2';
 
 import {
   fetchResumeList,
@@ -29,6 +30,7 @@ import {
   type ResumeListItem,
 } from '@/lib/api/resume';
 import { useStatusCache } from '@/lib/context/status-cache';
+import { clearResumeListCache, setResumeListCache } from '@/lib/resume-list-cache';
 
 export default function DashboardPage() {
   const { t, locale } = useTranslations();
@@ -44,6 +46,10 @@ export default function DashboardPage() {
   const [filterDateTo, setFilterDateTo] = useState('');
   const [filterMasterResumeId, setFilterMasterResumeId] = useState('');
   const [showHistoryModal, setShowHistoryModal] = useState(false);
+  const [selectedTailoredIds, setSelectedTailoredIds] = useState<Set<string>>(() => new Set());
+  const [showBulkDeleteConfirm, setShowBulkDeleteConfirm] = useState(false);
+  const [isBulkDeleting, setIsBulkDeleting] = useState(false);
+  const selectAllFilteredRef = useRef<HTMLInputElement>(null);
   const router = useRouter();
 
   const getMasterDisplayName = (parentId: string | null): string => {
@@ -181,6 +187,7 @@ export default function DashboardPage() {
   const loadTailoredResumes = useCallback(async () => {
     try {
       const data = await fetchResumeList(true);
+      setResumeListCache(data);
       const masters = data.filter((r) => r.is_master);
       const tailored = data.filter((r) => !r.is_master);
 
@@ -262,6 +269,74 @@ export default function DashboardPage() {
     setFilterDateFrom('');
     setFilterDateTo('');
   }, [showHistoryModal]);
+
+  useEffect(() => {
+    if (!showHistoryModal) {
+      setSelectedTailoredIds(new Set());
+      setShowBulkDeleteConfirm(false);
+    }
+  }, [showHistoryModal]);
+
+  const filteredTailoredIds = useMemo(
+    () => filteredTailoredResumes.map((r) => r.resume_id),
+    [filteredTailoredResumes]
+  );
+
+  const allFilteredSelected =
+    filteredTailoredIds.length > 0 &&
+    filteredTailoredIds.every((id) => selectedTailoredIds.has(id));
+  const someFilteredSelected = filteredTailoredIds.some((id) => selectedTailoredIds.has(id));
+
+  useEffect(() => {
+    const el = selectAllFilteredRef.current;
+    if (!el) return;
+    el.indeterminate = someFilteredSelected && !allFilteredSelected;
+  }, [someFilteredSelected, allFilteredSelected, showHistoryModal]);
+
+  const toggleTailoredSelected = (resumeId: string) => {
+    setSelectedTailoredIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(resumeId)) next.delete(resumeId);
+      else next.add(resumeId);
+      return next;
+    });
+  };
+
+  const toggleSelectAllFiltered = () => {
+    setSelectedTailoredIds((prev) => {
+      if (allFilteredSelected) {
+        const next = new Set(prev);
+        filteredTailoredIds.forEach((id) => next.delete(id));
+        return next;
+      }
+      return new Set([...prev, ...filteredTailoredIds]);
+    });
+  };
+
+  const confirmBulkDeleteTailored = async () => {
+    const ids = Array.from(selectedTailoredIds);
+    if (ids.length === 0) {
+      setShowBulkDeleteConfirm(false);
+      return;
+    }
+    setIsBulkDeleting(true);
+    try {
+      for (const id of ids) {
+        await deleteResume(id);
+        decrementResumes();
+      }
+      clearResumeListCache();
+      await loadTailoredResumes();
+      setSelectedTailoredIds(new Set());
+      setShowBulkDeleteConfirm(false);
+    } catch (err) {
+      console.error('Bulk delete tailored resumes failed:', err);
+      clearResumeListCache();
+      await loadTailoredResumes();
+    } finally {
+      setIsBulkDeleting(false);
+    }
+  };
 
   const handleUploadComplete = (resumeId: string) => {
     localStorage.setItem('master_resume_id', resumeId);
@@ -596,10 +671,33 @@ export default function DashboardPage() {
       {/* Created Resumes History — modal */}
       <Dialog open={showHistoryModal} onOpenChange={setShowHistoryModal}>
         <DialogContent className="max-w-4xl max-h-[90vh] overflow-hidden flex flex-col p-0">
-          <div className="pl-6 pr-14 pt-6 pb-0 flex-shrink-0">
+          <div className="pl-6 pr-14 pt-6 pb-0 flex-shrink-0 flex flex-row flex-wrap items-center justify-between gap-3">
             <h2 className="font-serif text-xl font-bold uppercase tracking-tight">
               {t('dashboard.tailoredResumesHistory')}
             </h2>
+            <Button
+              type="button"
+              variant="destructive"
+              size="sm"
+              disabled={selectedTailoredIds.size === 0 || isBulkDeleting}
+              className="rounded-none font-mono text-xs uppercase border-2 border-black shadow-sw-default"
+              onClick={() => {
+                if (selectedTailoredIds.size === 0) return;
+                setShowBulkDeleteConfirm(true);
+              }}
+            >
+              {isBulkDeleting ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  {t('dashboard.bulkDeleteTailoredInProgress')}
+                </>
+              ) : (
+                <>
+                  <Trash2 className="w-4 h-4 mr-2" />
+                  {t('dashboard.deleteSelectedTailored')}
+                </>
+              )}
+            </Button>
           </div>
           <div className="p-6 overflow-y-auto flex-1 min-h-0">
             <div className="mb-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
@@ -676,6 +774,21 @@ export default function DashboardPage() {
               <table className="w-full border-collapse font-sans text-sm">
                 <thead>
                   <tr className="bg-[#F0F0E8] border-b-2 border-black">
+                    <th
+                      className="text-center font-mono font-bold uppercase py-3 px-2 border-r border-black w-12"
+                      scope="col"
+                    >
+                      <span className="sr-only">{t('dashboard.tableSelect')}</span>
+                      <input
+                        ref={selectAllFilteredRef}
+                        type="checkbox"
+                        checked={allFilteredSelected}
+                        onChange={toggleSelectAllFiltered}
+                        disabled={filteredTailoredResumes.length === 0 || isBulkDeleting}
+                        className="h-4 w-4 accent-blue-700 border-black cursor-pointer"
+                        aria-label={t('dashboard.tableSelect')}
+                      />
+                    </th>
                     <th className="text-left font-mono font-bold uppercase py-3 px-4 border-r border-black w-14">
                       {t('dashboard.tableNo')}
                     </th>
@@ -688,6 +801,9 @@ export default function DashboardPage() {
                     <th className="text-left font-mono font-bold uppercase py-3 px-4 border-r border-black">
                       {t('dashboard.tableCompany')}
                     </th>
+                    <th className="text-left font-mono font-bold uppercase py-3 px-4 border-r border-black max-w-[10rem]">
+                      {t('dashboard.tablePostingUrl')}
+                    </th>
                     <th className="text-left font-mono font-bold uppercase py-3 px-4">
                       {t('dashboard.tableCreatedDate')}
                     </th>
@@ -697,7 +813,7 @@ export default function DashboardPage() {
                   {filteredTailoredResumes.length === 0 ? (
                     <tr>
                       <td
-                        colSpan={5}
+                        colSpan={7}
                         className="py-8 px-4 text-center font-mono text-gray-500 uppercase"
                       >
                         {tailoredResumes.length === 0
@@ -720,6 +836,19 @@ export default function DashboardPage() {
                             router.push(`/resumes/${resume.resume_id}`);
                           }}
                         >
+                          <td
+                            className="py-3 px-2 border-r border-gray-200 text-center"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={selectedTailoredIds.has(resume.resume_id)}
+                              onChange={() => toggleTailoredSelected(resume.resume_id)}
+                              disabled={isBulkDeleting}
+                              className="h-4 w-4 accent-blue-700 border-black cursor-pointer"
+                              aria-label={t('dashboard.tableSelect')}
+                            />
+                          </td>
                           <td className="py-3 px-4 border-r border-gray-200 font-mono">
                             {index + 1}
                           </td>
@@ -728,6 +857,24 @@ export default function DashboardPage() {
                           </td>
                           <td className="py-3 px-4 border-r border-gray-200">{jobTitle}</td>
                           <td className="py-3 px-4 border-r border-gray-200">{company}</td>
+                          <td
+                            className="py-3 px-4 border-r border-gray-200 max-w-[12rem] align-top"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            {resume.job_source_url?.trim() ? (
+                              <a
+                                href={resume.job_source_url.trim()}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="font-mono text-xs text-blue-700 underline break-all line-clamp-3"
+                                title={resume.job_source_url.trim()}
+                              >
+                                {resume.job_source_url.trim()}
+                              </a>
+                            ) : (
+                              <span className="font-mono text-xs text-gray-400">—</span>
+                            )}
+                          </td>
                           <td className="py-3 px-4 font-mono">
                             {formatDateTime(resume.created_at || '')}
                           </td>
@@ -741,6 +888,28 @@ export default function DashboardPage() {
           </div>
         </DialogContent>
       </Dialog>
+
+      <ConfirmDialog
+        open={showBulkDeleteConfirm}
+        onOpenChange={(open) => {
+          if (!open && isBulkDeleting) return;
+          setShowBulkDeleteConfirm(open);
+        }}
+        title={t('dashboard.deleteSelectedTailoredConfirmTitle')}
+        description={t('dashboard.deleteSelectedTailoredConfirmDescription', {
+          count: selectedTailoredIds.size,
+        })}
+        confirmLabel={
+          isBulkDeleting
+            ? t('dashboard.bulkDeleteTailoredInProgress')
+            : t('dashboard.deleteSelectedTailored')
+        }
+        cancelLabel={t('confirmations.keepResumeCancelLabel')}
+        confirmDisabled={isBulkDeleting}
+        closeOnConfirm={false}
+        onConfirm={() => void confirmBulkDeleteTailored()}
+        variant="danger"
+      />
     </div>
   );
 }

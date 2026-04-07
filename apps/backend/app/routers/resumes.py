@@ -157,6 +157,20 @@ def _get_original_resume_data(resume: dict[str, Any]) -> dict[str, Any] | None:
     return original_data
 
 
+def _job_source_url_for_tailored_resume(tailored_resume_id: str) -> str | None:
+    """Return stored job posting URL for a tailored resume, if any."""
+    improvement = db.get_improvement_by_tailored_resume(tailored_resume_id)
+    if not improvement:
+        return None
+    job = db.get_job(improvement.get("job_id") or "")
+    if not job:
+        return None
+    u = job.get("source_url")
+    if isinstance(u, str) and u.strip():
+        return u.strip()
+    return None
+
+
 def _get_original_markdown(resume: dict[str, Any]) -> str | None:
     """Get the original markdown content from a resume.
 
@@ -673,19 +687,25 @@ async def list_resumes(include_master: bool = Query(False)) -> ResumeListRespons
 
     resumes.sort(key=lambda item: item.get("updated_at", ""), reverse=True)
 
-    summaries = [
-        ResumeSummary(
-            resume_id=resume["resume_id"],
-            filename=resume.get("filename"),
-            is_master=resume.get("is_master", False),
-            parent_id=resume.get("parent_id"),
-            processing_status=resume.get("processing_status", "pending"),
-            created_at=resume.get("created_at", ""),
-            updated_at=resume.get("updated_at", ""),
-            title=resume.get("title"),
+    summaries: list[ResumeSummary] = []
+    for resume in resumes:
+        rid = resume["resume_id"]
+        job_url: str | None = None
+        if not resume.get("is_master", False):
+            job_url = _job_source_url_for_tailored_resume(rid)
+        summaries.append(
+            ResumeSummary(
+                resume_id=rid,
+                filename=resume.get("filename"),
+                is_master=resume.get("is_master", False),
+                parent_id=resume.get("parent_id"),
+                processing_status=resume.get("processing_status", "pending"),
+                created_at=resume.get("created_at", ""),
+                updated_at=resume.get("updated_at", ""),
+                title=resume.get("title"),
+                job_source_url=job_url,
+            )
         )
-        for resume in resumes
-    ]
 
     return ResumeListResponse(request_id=str(uuid4()), data=summaries)
 
@@ -732,9 +752,14 @@ async def list_job_descriptions_by_parent(
             )
             continue
         content = job.get("content", "") if isinstance(job.get("content"), str) else ""
+        su = job.get("source_url")
+        source_url = su.strip() if isinstance(su, str) and su.strip() else None
         items.append(
             TailoredResumeJobDescription(
-                resume_id=rid, job_id=job.get("job_id", job_id), content=content
+                resume_id=rid,
+                job_id=job.get("job_id", job_id),
+                content=content,
+                source_url=source_url,
             )
         )
 
@@ -1711,10 +1736,14 @@ async def get_job_description_for_resume(resume_id: str) -> dict:
             detail="The associated job description was not found.",
         )
 
-    return {
+    out: dict[str, Any] = {
         "job_id": job["job_id"],
         "content": job["content"],
     }
+    su = job.get("source_url")
+    if isinstance(su, str) and su.strip():
+        out["source_url"] = su.strip()
+    return out
 
 
 @router.get("/{resume_id}/cover-letter/pdf")

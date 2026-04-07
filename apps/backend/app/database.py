@@ -156,8 +156,24 @@ class Database:
         return result
 
     def delete_resume(self, resume_id: str) -> bool:
-        """Delete resume by ID."""
+        """Delete resume by ID and related improvement / orphan job rows."""
         Resume = Query()
+        Improvement = Query()
+        Job = Query()
+
+        imp_rows = self.improvements.search(
+            Improvement.tailored_resume_id == resume_id
+        )
+        job_ids = {row.get("job_id") for row in imp_rows if row.get("job_id")}
+        self.improvements.remove(Improvement.tailored_resume_id == resume_id)
+
+        for jid in job_ids:
+            if not jid:
+                continue
+            remaining = self.improvements.search(Improvement.job_id == jid)
+            if not remaining:
+                self.jobs.remove(Job.job_id == jid)
+
         removed = self.resumes.remove(Resume.resume_id == resume_id)
         return len(removed) > 0
 
@@ -187,17 +203,24 @@ class Database:
         return len(updated) > 0
 
     # Job operations
-    def create_job(self, content: str, resume_id: str | None = None) -> dict[str, Any]:
+    def create_job(
+        self,
+        content: str,
+        resume_id: str | None = None,
+        source_url: str | None = None,
+    ) -> dict[str, Any]:
         """Create a new job description entry."""
         job_id = str(uuid4())
         now = datetime.now(timezone.utc).isoformat()
 
-        doc = {
+        doc: dict[str, Any] = {
             "job_id": job_id,
             "content": content,
             "resume_id": resume_id,
             "created_at": now,
         }
+        if source_url and str(source_url).strip():
+            doc["source_url"] = str(source_url).strip()
         self.jobs.insert(doc)
         return doc
 
