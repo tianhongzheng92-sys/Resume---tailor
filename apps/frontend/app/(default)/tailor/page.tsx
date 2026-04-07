@@ -75,6 +75,7 @@ export default function TailorPage() {
     createdAt: string;
     duplicateByUrl?: boolean;
     matchedUrl?: string;
+    duplicateByJd?: boolean;
   } | null>(null);
   const [pendingGenerate, setPendingGenerate] = useState<{
     resumeId: string;
@@ -390,14 +391,20 @@ export default function TailorPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- extractTitleCompanyFromDescription is pure
   }, [debouncedJobDescription]);
 
+  /** Same JD text (normalized), or near-duplicate when one full text contains the other. */
+  const jdTextsAreDuplicate = (aNorm: string, bNorm: string): boolean => {
+    if (!aNorm || !bNorm) return false;
+    if (aNorm === bNorm) return true;
+    const shortLen = Math.min(aNorm.length, bNorm.length);
+    if (shortLen < 80) return false;
+    return aNorm.includes(bNorm) || bNorm.includes(aNorm);
+  };
+
   const findDuplicateResume = async (
     resumeId: string,
     description: string,
     postingUrlRaw: string
   ) => {
-    const normalizedDescription = normalizeText(description);
-    if (!normalizedDescription) return null;
-
     let list = getResumeListCache();
     if (!list) {
       list = await fetchResumeList(true);
@@ -406,6 +413,9 @@ export default function TailorPage() {
     const relatedTailored = list.filter((item) => !item.is_master && item.parent_id === resumeId);
     if (relatedTailored.length === 0) return null;
 
+    const normalizedDescription = normalizeText(description);
+
+    // 1) Posting URL (normalized) — strongest signal
     const normIncomingUrl = normalizeJobPostingUrl(postingUrlRaw);
     if (normIncomingUrl) {
       const urlMatches = relatedTailored.filter((item) => {
@@ -429,6 +439,38 @@ export default function TailorPage() {
         };
       }
     }
+
+    // 2) Full job description text vs stored JD for this master
+    if (normalizedDescription) {
+      try {
+        const jdMap = await fetchJobDescriptionsByParent(resumeId);
+        const jdDup = [...relatedTailored]
+          .sort((a, b) => {
+            return new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime();
+          })
+          .find((item) => {
+            const stored = jdMap[item.resume_id]?.content;
+            if (!stored?.trim()) return false;
+            return jdTextsAreDuplicate(normalizedDescription, normalizeText(stored));
+          });
+        if (jdDup) {
+          const fullTitle = jdDup.title || jdDup.filename || '';
+          const { jobTitle, company } = parseTitleAndCompany(fullTitle);
+          return {
+            resumeId: jdDup.resume_id,
+            jobTitle,
+            company,
+            createdAt: formatDateTime(jdDup.created_at || ''),
+            duplicateByJd: true,
+          };
+        }
+      } catch (e) {
+        console.warn('Duplicate check: could not load stored job descriptions', e);
+      }
+    }
+
+    // 3) Heuristic: title/company extracted from paste vs resume title
+    if (!normalizedDescription) return null;
 
     const extracted = extractTitleCompanyFromDescription(description);
     const matches = relatedTailored.filter((item) => {
@@ -1021,11 +1063,17 @@ export default function TailorPage() {
                 company: duplicateInfo.company || '—',
                 createdAt: duplicateInfo.createdAt || t('common.unknown'),
               })
-            : t('tailor.duplicateDialog.description', {
-                jobTitle: duplicateInfo?.jobTitle || '—',
-                company: duplicateInfo?.company || '—',
-                createdAt: duplicateInfo?.createdAt || t('common.unknown'),
-              })
+            : duplicateInfo?.duplicateByJd
+              ? t('tailor.duplicateDialog.descriptionByJd', {
+                  jobTitle: duplicateInfo.jobTitle || '—',
+                  company: duplicateInfo.company || '—',
+                  createdAt: duplicateInfo.createdAt || t('common.unknown'),
+                })
+              : t('tailor.duplicateDialog.description', {
+                  jobTitle: duplicateInfo?.jobTitle || '—',
+                  company: duplicateInfo?.company || '—',
+                  createdAt: duplicateInfo?.createdAt || t('common.unknown'),
+                })
         }
         confirmLabel={t('tailor.duplicateDialog.continueLabel')}
         cancelLabel={t('common.cancel')}

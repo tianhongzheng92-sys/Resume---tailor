@@ -31,6 +31,7 @@ import {
 } from '@/lib/api/resume';
 import { useStatusCache } from '@/lib/context/status-cache';
 import { clearResumeListCache, setResumeListCache } from '@/lib/resume-list-cache';
+import { normalizeJobPostingUrl } from '@/lib/utils/job-posting-url';
 
 export default function DashboardPage() {
   const { t, locale } = useTranslations();
@@ -45,6 +46,7 @@ export default function DashboardPage() {
   const [filterDateFrom, setFilterDateFrom] = useState('');
   const [filterDateTo, setFilterDateTo] = useState('');
   const [filterMasterResumeId, setFilterMasterResumeId] = useState('');
+  const [filterPostingUrl, setFilterPostingUrl] = useState('');
   const [showHistoryModal, setShowHistoryModal] = useState(false);
   const [selectedTailoredIds, setSelectedTailoredIds] = useState<Set<string>>(() => new Set());
   const [showBulkDeleteConfirm, setShowBulkDeleteConfirm] = useState(false);
@@ -170,6 +172,16 @@ export default function DashboardPage() {
       if (filterDateTo) {
         if (!created || created.slice(0, 10) > filterDateTo) return false;
       }
+      if (filterPostingUrl.trim()) {
+        const rawStored = (r.job_source_url || '').trim().toLowerCase();
+        if (!rawStored) return false;
+        const q = filterPostingUrl.trim().toLowerCase();
+        if (!rawStored.includes(q)) {
+          const nq = normalizeJobPostingUrl(filterPostingUrl);
+          const ns = normalizeJobPostingUrl(r.job_source_url);
+          if (!nq || !ns || nq !== ns) return false;
+        }
+      }
       return true;
     });
     return [...filtered].sort(
@@ -182,6 +194,7 @@ export default function DashboardPage() {
     filterCompany,
     filterDateFrom,
     filterDateTo,
+    filterPostingUrl,
   ]);
 
   const loadTailoredResumes = useCallback(async () => {
@@ -268,6 +281,7 @@ export default function DashboardPage() {
     setFilterCompany('');
     setFilterDateFrom('');
     setFilterDateTo('');
+    setFilterPostingUrl('');
   }, [showHistoryModal]);
 
   useEffect(() => {
@@ -670,7 +684,7 @@ export default function DashboardPage() {
 
       {/* Created Resumes History — modal */}
       <Dialog open={showHistoryModal} onOpenChange={setShowHistoryModal}>
-        <DialogContent className="max-w-4xl max-h-[90vh] overflow-hidden flex flex-col p-0">
+        <DialogContent className="w-[min(96rem,calc(100vw-1.5rem))] max-w-none max-h-[min(92vh,56rem)] overflow-hidden flex flex-col p-0 sm:max-w-none">
           <div className="pl-6 pr-14 pt-6 pb-0 flex-shrink-0 flex flex-row flex-wrap items-center justify-between gap-3">
             <h2 className="font-serif text-xl font-bold uppercase tracking-tight">
               {t('dashboard.tailoredResumesHistory')}
@@ -700,7 +714,7 @@ export default function DashboardPage() {
             </Button>
           </div>
           <div className="p-6 overflow-y-auto flex-1 min-h-0">
-            <div className="mb-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+            <div className="mb-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
               <div>
                 <label className="block font-mono text-xs font-bold uppercase text-gray-600 mb-1">
                   {t('dashboard.filterMasterResume')}
@@ -762,6 +776,20 @@ export default function DashboardPage() {
                   value={filterDateTo}
                   onChange={(e) => setFilterDateTo(e.target.value)}
                   className="rounded-none"
+                />
+              </div>
+              <div className="lg:col-span-2 xl:col-span-1">
+                <label className="block font-mono text-xs font-bold uppercase text-gray-600 mb-1">
+                  {t('dashboard.filterPostingUrl')}
+                </label>
+                <Input
+                  type="text"
+                  inputMode="url"
+                  autoComplete="url"
+                  placeholder={t('dashboard.filterPostingUrlPlaceholder')}
+                  value={filterPostingUrl}
+                  onChange={(e) => setFilterPostingUrl(e.target.value)}
+                  className="rounded-none font-mono text-sm"
                 />
               </div>
             </div>

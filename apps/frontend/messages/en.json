@@ -84,6 +84,8 @@
     "filterCompanyPlaceholder": "Search company...",
     "filterDateFrom": "Created From",
     "filterDateTo": "Created To",
+    "filterPostingUrl": "Posting URL",
+    "filterPostingUrlPlaceholder": "Filter by job link…",
     "filterMasterResume": "Master Resume",
     "filterAllMasters": "All",
     "tableNo": "No.",
@@ -596,6 +598,7 @@
       "title": "Similar tailored resume exists",
       "description": "A tailored resume with the same job description and master resume already exists. Job Title: {jobTitle} | Company: {company} | Created: {createdAt}. Continue anyway?",
       "descriptionByUrl": "A tailored resume for the same job posting URL already exists. URL: {url} | Job Title: {jobTitle} | Company: {company} | Created: {createdAt}. Continue anyway?",
+      "descriptionByJd": "A tailored resume with the same or very similar job description already exists. Job Title: {jobTitle} | Company: {company} | Created: {createdAt}. Continue anyway?",
       "continueLabel": "Continue"
     },
     "jdCompare": {
