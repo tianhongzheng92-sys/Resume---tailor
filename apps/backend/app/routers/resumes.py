@@ -157,18 +157,21 @@ def _get_original_resume_data(resume: dict[str, Any]) -> dict[str, Any] | None:
     return original_data
 
 
-def _job_source_url_for_tailored_resume(tailored_resume_id: str) -> str | None:
-    """Return stored job posting URL for a tailored resume, if any."""
+def _job_meta_for_tailored_resume(tailored_resume_id: str) -> dict[str, str | None]:
+    """Return stored posting URL, company, and job title from the tailor form."""
     improvement = db.get_improvement_by_tailored_resume(tailored_resume_id)
     if not improvement:
-        return None
+        return {"source_url": None, "company_name": None, "job_title": None}
     job = db.get_job(improvement.get("job_id") or "")
     if not job:
-        return None
-    u = job.get("source_url")
-    if isinstance(u, str) and u.strip():
-        return u.strip()
-    return None
+        return {"source_url": None, "company_name": None, "job_title": None}
+    su = job.get("source_url")
+    source_url = su.strip() if isinstance(su, str) and su.strip() else None
+    cn = job.get("company_name")
+    company_name = cn.strip() if isinstance(cn, str) and cn.strip() else None
+    jt = job.get("job_title")
+    job_title = jt.strip() if isinstance(jt, str) and jt.strip() else None
+    return {"source_url": source_url, "company_name": company_name, "job_title": job_title}
 
 
 def _get_original_markdown(resume: dict[str, Any]) -> str | None:
@@ -483,12 +486,30 @@ def _validate_confirm_payload(
         raise ValueError(f"personalInfo fields changed: {', '.join(mismatches)}")
 
 
+def _registered_company_name(job: dict[str, Any]) -> str | None:
+    """Company name saved from the tailor form (not parsed from the JD)."""
+    cn = job.get("company_name")
+    if isinstance(cn, str) and cn.strip():
+        return cn.strip()
+    return None
+
+
+def _registered_job_title(job: dict[str, Any]) -> str | None:
+    """Job title saved from the tailor form (not parsed from the JD)."""
+    jt = job.get("job_title")
+    if isinstance(jt, str) and jt.strip():
+        return jt.strip()
+    return None
+
+
 async def _generate_auxiliary_messages(
     improved_data: dict[str, Any],
     job_content: str,
     language: str,
     enable_cover_letter: bool,
     enable_outreach: bool,
+    company_name: str | None = None,
+    job_title: str | None = None,
 ) -> tuple[str | None, str | None, str | None, list[str]]:
     """Generate cover letter, outreach message, and resume title.
 
@@ -502,7 +523,14 @@ async def _generate_auxiliary_messages(
     task_labels: list[str] = []
 
     # Title generation is always on (no feature flag)
-    generation_tasks.append(generate_resume_title(job_content, language))
+    generation_tasks.append(
+        generate_resume_title(
+            job_content,
+            language,
+            company_name=company_name,
+            job_title=job_title,
+        )
+    )
     task_labels.append("title")
 
     if enable_cover_letter:
@@ -691,8 +719,13 @@ async def list_resumes(include_master: bool = Query(False)) -> ResumeListRespons
     for resume in resumes:
         rid = resume["resume_id"]
         job_url: str | None = None
+        job_company: str | None = None
+        job_role: str | None = None
         if not resume.get("is_master", False):
-            job_url = _job_source_url_for_tailored_resume(rid)
+            meta = _job_meta_for_tailored_resume(rid)
+            job_url = meta["source_url"]
+            job_company = meta["company_name"]
+            job_role = meta["job_title"]
         summaries.append(
             ResumeSummary(
                 resume_id=rid,
@@ -704,6 +737,8 @@ async def list_resumes(include_master: bool = Query(False)) -> ResumeListRespons
                 updated_at=resume.get("updated_at", ""),
                 title=resume.get("title"),
                 job_source_url=job_url,
+                job_company_name=job_company,
+                job_job_title=job_role,
             )
         )
 
@@ -754,12 +789,18 @@ async def list_job_descriptions_by_parent(
         content = job.get("content", "") if isinstance(job.get("content"), str) else ""
         su = job.get("source_url")
         source_url = su.strip() if isinstance(su, str) and su.strip() else None
+        cn = job.get("company_name")
+        company_name = cn.strip() if isinstance(cn, str) and cn.strip() else None
+        jt = job.get("job_title")
+        job_title = jt.strip() if isinstance(jt, str) and jt.strip() else None
         items.append(
             TailoredResumeJobDescription(
                 resume_id=rid,
                 job_id=job.get("job_id", job_id),
                 content=content,
                 source_url=source_url,
+                company_name=company_name,
+                job_title=job_title,
             )
         )
 
@@ -1070,6 +1111,8 @@ async def improve_resume_confirm_endpoint(
             language,
             enable_cover_letter,
             enable_outreach,
+            company_name=_registered_company_name(job),
+            job_title=_registered_job_title(job),
         )
         response_warnings.extend(aux_warnings)
 
@@ -1258,6 +1301,8 @@ async def improve_resume_endpoint(
             language,
             enable_cover_letter,
             enable_outreach,
+            company_name=_registered_company_name(job),
+            job_title=_registered_job_title(job),
         )
         response_warnings.extend(aux_warnings)
 
@@ -1743,6 +1788,12 @@ async def get_job_description_for_resume(resume_id: str) -> dict:
     su = job.get("source_url")
     if isinstance(su, str) and su.strip():
         out["source_url"] = su.strip()
+    cn = job.get("company_name")
+    if isinstance(cn, str) and cn.strip():
+        out["company_name"] = cn.strip()
+    jt = job.get("job_title")
+    if isinstance(jt, str) and jt.strip():
+        out["job_title"] = jt.strip()
     return out
 
 

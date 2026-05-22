@@ -208,6 +208,8 @@ class Database:
         content: str,
         resume_id: str | None = None,
         source_url: str | None = None,
+        company_name: str | None = None,
+        job_title: str | None = None,
     ) -> dict[str, Any]:
         """Create a new job description entry."""
         job_id = str(uuid4())
@@ -221,6 +223,10 @@ class Database:
         }
         if source_url and str(source_url).strip():
             doc["source_url"] = str(source_url).strip()
+        if company_name and str(company_name).strip():
+            doc["company_name"] = str(company_name).strip()
+        if job_title and str(job_title).strip():
+            doc["job_title"] = str(job_title).strip()
         self.jobs.insert(doc)
         return doc
 
@@ -229,6 +235,36 @@ class Database:
         Job = Query()
         result = self.jobs.search(Job.job_id == job_id)
         return result[0] if result else None
+
+    def list_registered_applications(
+        self, master_resume_id: str | None = None
+    ) -> list[dict[str, Any]]:
+        """Jobs tied to a master resume that have no tailored resume yet."""
+        tailored_job_ids = {
+            row.get("job_id")
+            for row in self.improvements.all()
+            if row.get("job_id")
+        }
+        master_ids = {
+            r["resume_id"]
+            for r in self.resumes.all()
+            if r.get("is_master")
+        }
+
+        items: list[dict[str, Any]] = []
+        for job in self.jobs.all():
+            job_id = job.get("job_id")
+            if not job_id or job_id in tailored_job_ids:
+                continue
+            rid = job.get("resume_id")
+            if not rid or rid not in master_ids:
+                continue
+            if master_resume_id and rid != master_resume_id:
+                continue
+            items.append(job)
+
+        items.sort(key=lambda j: j.get("created_at", ""), reverse=True)
+        return items
 
     def update_job(self, job_id: str, updates: dict[str, Any]) -> dict[str, Any] | None:
         """Update a job by ID."""

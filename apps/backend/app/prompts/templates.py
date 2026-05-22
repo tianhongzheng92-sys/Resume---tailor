@@ -406,9 +406,7 @@ Output in this JSON format:
 
 
 IMPROVE_RESUME_PROMPT_OTHER = """Tailor this resume for the job. Output ONLY the JSON object, no other text.
-{critical_truthfulness_rules}
 
-{recruiter_ats_framework}
 IMPORTANT: Generate ALL text content (summary, descriptions, skills) in {output_language}.
 Do NOT include personalInfo in your output - it will be preserved from the original resume.
 
@@ -567,6 +565,21 @@ Rules:
 - Maximum 60 characters for the whole line. No quotes, no bullets, no newlines, no second sentence.
 
 Output the single title line only, nothing else."""
+
+GENERATE_TITLE_ROLE_ONLY_PROMPT = """Extract the JOB TITLE from the posting.
+
+IMPORTANT: Write in {output_language}.
+
+Job Description:
+{job_description}
+
+Rules:
+- IGNORE marketing blurbs and "About us" sections. Find the actual position name.
+- Output ONLY the role title (a few words), not a sentence. No company name (the employer is registered separately).
+- No @ symbol, no quotes, no bullets, no newlines.
+- Maximum 50 characters.
+
+Output the role title only, nothing else."""
 
 # Alias for backward compatibility
 RESUME_SCHEMA = RESUME_SCHEMA_EXAMPLE

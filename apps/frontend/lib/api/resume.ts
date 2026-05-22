@@ -107,6 +107,10 @@ export interface ResumeListItem {
   title?: string | null;
   /** Job posting URL from backend (tailored resumes only) */
   job_source_url?: string | null;
+  /** Company name from tailor form (not parsed from JD) */
+  job_company_name?: string | null;
+  /** Job title from tailor form (not parsed from JD) */
+  job_job_title?: string | null;
   // Optional lightweight snippet of associated job description (populated client-side)
   jobSnippet?: string;
 }
@@ -141,19 +145,32 @@ async function postImprove(
 export async function uploadJobDescriptions(
   descriptions: string[],
   resumeId: string,
-  sourceUrls?: (string | null | undefined)[]
+  sourceUrls?: (string | null | undefined)[],
+  companyNames?: (string | null | undefined)[],
+  jobTitles?: (string | null | undefined)[]
 ): Promise<string> {
   const body: Record<string, unknown> = {
     job_descriptions: descriptions,
     resume_id: resumeId,
   };
-  if (
-    sourceUrls !== undefined &&
-    sourceUrls.length === descriptions.length
-  ) {
+  if (sourceUrls !== undefined && sourceUrls.length === descriptions.length) {
     body.source_urls = descriptions.map((_, i) => {
       const u = sourceUrls[i];
       const s = typeof u === 'string' ? u.trim() : '';
+      return s ? s : null;
+    });
+  }
+  if (companyNames !== undefined && companyNames.length === descriptions.length) {
+    body.company_names = descriptions.map((_, i) => {
+      const c = companyNames[i];
+      const s = typeof c === 'string' ? c.trim() : '';
+      return s ? s : null;
+    });
+  }
+  if (jobTitles !== undefined && jobTitles.length === descriptions.length) {
+    body.job_titles = descriptions.map((_, i) => {
+      const t = jobTitles[i];
+      const s = typeof t === 'string' ? t.trim() : '';
       return s ? s : null;
     });
   }
@@ -162,6 +179,55 @@ export async function uploadJobDescriptions(
   const data = await res.json();
   return data.job_id[0];
 }
+
+/** Saves application metadata (JD, URL, company) without generating a resume. */
+export async function registerJobApplication(payload: {
+  resumeId: string;
+  companyName: string;
+  jobTitle?: string;
+  content?: string;
+  sourceUrl?: string;
+}): Promise<string> {
+  const res = await apiPost('/jobs/register', {
+    resume_id: payload.resumeId,
+    company_name: payload.companyName.trim(),
+    job_title: payload.jobTitle?.trim() ?? '',
+    content: payload.content?.trim() ?? '',
+    source_url: payload.sourceUrl?.trim() || null,
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`Register failed with status ${res.status}: ${text}`);
+  }
+  const data = await res.json();
+  return data.job_id[0];
+}
+
+export interface RegisteredApplicationItem {
+  job_id: string;
+  master_resume_id: string;
+  company_name: string | null;
+  job_title: string | null;
+  source_url: string | null;
+  created_at: string;
+}
+
+/** Jobs saved without a tailored resume (register-only or not yet generated). */
+export async function fetchRegisteredApplications(
+  parentId?: string
+): Promise<RegisteredApplicationItem[]> {
+  const qs = parentId ? `?parent_id=${encodeURIComponent(parentId)}` : '';
+  const res = await apiFetch(`/jobs/applications${qs}`);
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`Failed to fetch applications (status ${res.status}): ${text}`);
+  }
+  const payload = (await res.json()) as { data: RegisteredApplicationItem[] };
+  return payload.data ?? [];
+}
+
+/** @deprecated Use fetchRegisteredApplications */
+export const fetchJobsByMaster = fetchRegisteredApplications;
 
 /** Improves the resume and returns the full preview object */
 export async function improveResume(
@@ -389,13 +455,20 @@ const jobDescriptionInflight = new Map<
 >();
 
 function primeJobDescriptionCache(
-  entries: Array<{ resume_id: string; job_id?: string; content?: string; source_url?: string }>
+  entries: Array<{
+    resume_id: string;
+    job_id?: string;
+    content?: string;
+    source_url?: string;
+    company_name?: string;
+  }>
 ): void {
   for (const row of entries) {
     jobDescriptionCache.set(row.resume_id, {
       job_id: row.job_id ?? '',
       content: row.content ?? '',
       ...(row.source_url?.trim() ? { source_url: row.source_url.trim() } : {}),
+      ...(row.company_name?.trim() ? { company_name: row.company_name.trim() } : {}),
     });
   }
 }
@@ -403,7 +476,9 @@ function primeJobDescriptionCache(
 /** Batch-load job descriptions for all tailored resumes under a master (one HTTP request). */
 export async function fetchJobDescriptionsByParent(
   parentResumeId: string
-): Promise<Record<string, { job_id: string; content: string; source_url?: string }>> {
+): Promise<
+  Record<string, { job_id: string; content: string; source_url?: string; company_name?: string }>
+> {
   const res = await apiFetch(
     `/resumes/job-descriptions/by-parent?parent_id=${encodeURIComponent(parentResumeId)}`
   );
@@ -412,16 +487,26 @@ export async function fetchJobDescriptionsByParent(
     throw new Error(`Failed to fetch job descriptions (status ${res.status}): ${text}`);
   }
   const payload = (await res.json()) as {
-    data: Array<{ resume_id: string; job_id?: string; content?: string; source_url?: string }>;
+    data: Array<{
+      resume_id: string;
+      job_id?: string;
+      content?: string;
+      source_url?: string;
+      company_name?: string;
+    }>;
   };
   const list = payload.data ?? [];
   primeJobDescriptionCache(list);
-  const map: Record<string, { job_id: string; content: string; source_url?: string }> = {};
+  const map: Record<
+    string,
+    { job_id: string; content: string; source_url?: string; company_name?: string }
+  > = {};
   for (const row of list) {
     map[row.resume_id] = {
       job_id: row.job_id ?? '',
       content: row.content ?? '',
       ...(row.source_url?.trim() ? { source_url: row.source_url.trim() } : {}),
+      ...(row.company_name?.trim() ? { company_name: row.company_name.trim() } : {}),
     };
   }
   return map;
@@ -430,7 +515,7 @@ export async function fetchJobDescriptionsByParent(
 /** Fetches the job description used to tailor a resume */
 export async function fetchJobDescription(
   resumeId: string
-): Promise<{ job_id: string; content: string; source_url?: string }> {
+): Promise<{ job_id: string; content: string; source_url?: string; company_name?: string }> {
   const cached = jobDescriptionCache.get(resumeId);
   if (cached) {
     return { ...cached };
@@ -449,11 +534,13 @@ export async function fetchJobDescription(
       job_id: string;
       content: string;
       source_url?: string;
+      company_name?: string;
     };
     const normalized = {
       job_id: data.job_id,
       content: data.content,
       ...(data.source_url?.trim() ? { source_url: data.source_url.trim() } : {}),
+      ...(data.company_name?.trim() ? { company_name: data.company_name.trim() } : {}),
     };
     jobDescriptionCache.set(resumeId, normalized);
     return normalized;

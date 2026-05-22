@@ -24,10 +24,12 @@ import Trash2 from 'lucide-react/dist/esm/icons/trash-2';
 
 import {
   fetchResumeList,
+  fetchRegisteredApplications,
   deleteResume,
   retryProcessing,
   fetchJobDescription,
   type ResumeListItem,
+  type RegisteredApplicationItem,
 } from '@/lib/api/resume';
 import { useStatusCache } from '@/lib/context/status-cache';
 import { clearResumeListCache, setResumeListCache } from '@/lib/resume-list-cache';
@@ -37,6 +39,9 @@ export default function DashboardPage() {
   const { t, locale } = useTranslations();
   const [masterResumes, setMasterResumes] = useState<ResumeListItem[]>([]);
   const [tailoredResumes, setTailoredResumes] = useState<ResumeListItem[]>([]);
+  const [registeredApplications, setRegisteredApplications] = useState<
+    RegisteredApplicationItem[]
+  >([]);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [masterIdToDelete, setMasterIdToDelete] = useState<string | null>(null);
   const [retryingId, setRetryingId] = useState<string | null>(null);
@@ -113,6 +118,19 @@ export default function DashboardPage() {
     return { jobTitle: raw || '—', company: '—' };
   };
 
+  /** Job title from resume name; company prefers API field from tailor form. */
+  const jobTitleAndCompanyForItem = (
+    item: ResumeListItem
+  ): { jobTitle: string; company: string } => {
+    const fromTitle = jobTitleAndCompanyFromStoredTitle(item.title, item.filename);
+    const registeredCompany = (item.job_company_name || '').trim();
+    const registeredTitle = (item.job_job_title || '').trim();
+    return {
+      jobTitle: registeredTitle || fromTitle.jobTitle,
+      company: registeredCompany || fromTitle.company,
+    };
+  };
+
   // Status cache for optimistic counter updates and LLM status check
   const {
     status: systemStatus,
@@ -152,7 +170,7 @@ export default function DashboardPage() {
 
   const filteredTailoredResumes = useMemo(() => {
     const filtered = tailoredResumes.filter((r) => {
-      const { jobTitle, company } = jobTitleAndCompanyFromStoredTitle(r.title, r.filename);
+      const { jobTitle, company } = jobTitleAndCompanyForItem(r);
       const created = r.created_at || '';
 
       if (filterMasterResumeId) {
@@ -197,15 +215,76 @@ export default function DashboardPage() {
     filterPostingUrl,
   ]);
 
+  const filteredRegisteredApplications = useMemo(() => {
+    const filtered = registeredApplications.filter((app) => {
+      if (filterMasterResumeId && app.master_resume_id !== filterMasterResumeId) {
+        return false;
+      }
+      if (filterJobTitle.trim()) {
+        const q = filterJobTitle.trim().toLowerCase();
+        const jt = (app.job_title || '').toLowerCase();
+        if (!jt.includes(q)) return false;
+      }
+      if (filterCompany.trim()) {
+        const q = filterCompany.trim().toLowerCase();
+        const co = (app.company_name || '').toLowerCase();
+        if (!co.includes(q)) return false;
+      }
+      const created = app.created_at || '';
+      if (filterDateFrom) {
+        if (!created || created.slice(0, 10) < filterDateFrom) return false;
+      }
+      if (filterDateTo) {
+        if (!created || created.slice(0, 10) > filterDateTo) return false;
+      }
+      if (filterPostingUrl.trim()) {
+        const rawStored = (app.source_url || '').trim().toLowerCase();
+        if (!rawStored) return false;
+        const q = filterPostingUrl.trim().toLowerCase();
+        const normStored = normalizeJobPostingUrl(app.source_url || '')?.toLowerCase();
+        const normQ = normalizeJobPostingUrl(filterPostingUrl.trim())?.toLowerCase();
+        if (
+          !rawStored.includes(q) &&
+          !(normStored && normQ && normStored === normQ)
+        ) {
+          return false;
+        }
+      }
+      return true;
+    });
+    return filtered.sort(
+      (a, b) =>
+        new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()
+    );
+  }, [
+    registeredApplications,
+    filterMasterResumeId,
+    filterCompany,
+    filterDateFrom,
+    filterDateTo,
+    filterPostingUrl,
+    filterJobTitle,
+  ]);
+
   const loadTailoredResumes = useCallback(async () => {
+    const requestId = ++loadRequestIdRef.current;
     try {
-      const data = await fetchResumeList(true);
+      const [data, apps] = await Promise.all([
+        fetchResumeList(true),
+        fetchRegisteredApplications().catch((appsErr) => {
+          console.error('Failed to load registered applications:', appsErr);
+          return [] as RegisteredApplicationItem[];
+        }),
+      ]);
+      if (requestId !== loadRequestIdRef.current) return;
+
       setResumeListCache(data);
       const masters = data.filter((r) => r.is_master);
       const tailored = data.filter((r) => !r.is_master);
 
       setMasterResumes(masters);
       setTailoredResumes(tailored);
+      setRegisteredApplications(apps);
       setHasMasterResume(masters.length > 0);
 
       // Keep last-used master for tailor page default; if none set, use first master
@@ -222,9 +301,6 @@ export default function DashboardPage() {
       // Only fetch job descriptions for resumes that are actually tailored
       // (identified by having a non-null parent_id). This avoids N+1 calls
       const tailoredWithParent = tailored.filter((r) => r.parent_id);
-
-      // Guard against concurrent invocations overwriting each other
-      const requestId = ++loadRequestIdRef.current;
 
       // Fetch job description snippets for tailored resumes in parallel and attach to state
       // Use a small in-memory cache to avoid re-fetching the same snippet repeatedly.
@@ -275,6 +351,7 @@ export default function DashboardPage() {
 
   useEffect(() => {
     if (!showHistoryModal) return;
+    loadTailoredResumes();
     // Ensure all histories are visible by default when the modal opens.
     setFilterMasterResumeId('');
     setFilterJobTitle('');
@@ -282,7 +359,7 @@ export default function DashboardPage() {
     setFilterDateFrom('');
     setFilterDateTo('');
     setFilterPostingUrl('');
-  }, [showHistoryModal]);
+  }, [showHistoryModal, loadTailoredResumes]);
 
   useEffect(() => {
     if (!showHistoryModal) {
@@ -794,11 +871,14 @@ export default function DashboardPage() {
               </div>
             </div>
 
+            <h3 className="font-mono text-xs font-bold uppercase text-gray-800 mb-2">
+              {t('dashboard.historySectionTailored')}
+            </h3>
             <div className="mb-3 font-mono text-xs uppercase text-gray-700">
               Total: {tailoredResumes.length} / Showing: {filteredTailoredResumes.length}
             </div>
 
-            <div className="overflow-x-auto border border-black">
+            <div className="overflow-x-auto border border-black mb-10">
               <table className="w-full border-collapse font-sans text-sm">
                 <thead>
                   <tr className="bg-[#F0F0E8] border-b-2 border-black">
@@ -851,10 +931,7 @@ export default function DashboardPage() {
                     </tr>
                   ) : (
                     filteredTailoredResumes.map((resume, index) => {
-                      const { jobTitle, company } = jobTitleAndCompanyFromStoredTitle(
-                        resume.title,
-                        resume.filename
-                      );
+                      const { jobTitle, company } = jobTitleAndCompanyForItem(resume);
                       return (
                         <tr
                           key={resume.resume_id}
@@ -909,6 +986,107 @@ export default function DashboardPage() {
                         </tr>
                       );
                     })
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            <h3 className="font-mono text-xs font-bold uppercase text-gray-800 mb-2 mt-2">
+              {t('dashboard.registeredApplicationsHistory')}
+            </h3>
+            <div className="mb-3 font-mono text-xs uppercase text-gray-700">
+              Total: {registeredApplications.length} / Showing:{' '}
+              {filteredRegisteredApplications.length}
+            </div>
+
+            <div className="overflow-x-auto border border-black">
+              <table className="w-full border-collapse font-sans text-sm">
+                <thead>
+                  <tr className="bg-[#F0F0E8] border-b-2 border-black">
+                    <th className="text-left font-mono font-bold uppercase py-3 px-4 border-r border-black w-14">
+                      {t('dashboard.tableNo')}
+                    </th>
+                    <th className="text-left font-mono font-bold uppercase py-3 px-4 border-r border-black">
+                      {t('dashboard.tableMasterResume')}
+                    </th>
+                    <th className="text-left font-mono font-bold uppercase py-3 px-4 border-r border-black">
+                      {t('dashboard.tableJobTitle')}
+                    </th>
+                    <th className="text-left font-mono font-bold uppercase py-3 px-4 border-r border-black">
+                      {t('dashboard.tableCompany')}
+                    </th>
+                    <th className="text-left font-mono font-bold uppercase py-3 px-4 border-r border-black max-w-[10rem]">
+                      {t('dashboard.tablePostingUrl')}
+                    </th>
+                    <th className="text-left font-mono font-bold uppercase py-3 px-4 border-r border-black">
+                      {t('dashboard.tableCreatedDate')}
+                    </th>
+                    <th className="text-left font-mono font-bold uppercase py-3 px-4">
+                      {t('dashboard.registeredOnlyStatus')}
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredRegisteredApplications.length === 0 ? (
+                    <tr>
+                      <td
+                        colSpan={7}
+                        className="py-8 px-4 text-center font-mono text-gray-500 uppercase"
+                      >
+                        {registeredApplications.length === 0
+                          ? t('dashboard.noRegisteredApplications')
+                          : t('dashboard.noMatchingRegisteredApplications')}
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredRegisteredApplications.map((app, index) => (
+                      <tr
+                        key={app.job_id}
+                        className="border-b border-gray-300 hover:bg-amber-50/50 cursor-pointer transition-colors"
+                        onClick={() => {
+                          setShowHistoryModal(false);
+                          if (typeof window !== 'undefined') {
+                            localStorage.setItem('master_resume_id', app.master_resume_id);
+                          }
+                          router.push(`/tailor?master=${encodeURIComponent(app.master_resume_id)}`);
+                        }}
+                      >
+                        <td className="py-3 px-4 border-r border-gray-200 font-mono">
+                          {index + 1}
+                        </td>
+                        <td className="py-3 px-4 border-r border-gray-200">
+                          {getMasterDisplayName(app.master_resume_id)}
+                        </td>
+                        <td className="py-3 px-4 border-r border-gray-200">
+                          {app.job_title?.trim() || '—'}
+                        </td>
+                        <td className="py-3 px-4 border-r border-gray-200">
+                          {app.company_name?.trim() || '—'}
+                        </td>
+                        <td className="py-3 px-4 border-r border-gray-200 max-w-[12rem] align-top">
+                          {app.source_url?.trim() ? (
+                            <a
+                              href={app.source_url.trim()}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="font-mono text-xs text-blue-700 underline break-all line-clamp-3"
+                              title={app.source_url.trim()}
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              {app.source_url.trim()}
+                            </a>
+                          ) : (
+                            <span className="font-mono text-xs text-gray-400">—</span>
+                          )}
+                        </td>
+                        <td className="py-3 px-4 border-r border-gray-200 font-mono">
+                          {formatDateTime(app.created_at || '')}
+                        </td>
+                        <td className="py-3 px-4 font-mono text-xs uppercase text-amber-800">
+                          {t('dashboard.registeredOnlyStatus')}
+                        </td>
+                      </tr>
+                    ))
                   )}
                 </tbody>
               </table>

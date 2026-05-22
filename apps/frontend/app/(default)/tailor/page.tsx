@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
@@ -11,6 +11,7 @@ import type { ImprovedResult } from '@/components/common/resume_previewer_contex
 import type { ResumeData } from '@/components/dashboard/resume-component';
 import {
   uploadJobDescriptions,
+  registerJobApplication,
   previewImproveResume,
   confirmImproveResume,
   fetchResumeList,
@@ -36,7 +37,11 @@ export default function TailorPage() {
   const { t } = useTranslations();
   const [jobDescription, setJobDescription] = useState('');
   const [jobPostingUrl, setJobPostingUrl] = useState('');
+  const [jobTitle, setJobTitle] = useState('');
+  const [companyName, setCompanyName] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [isRegistering, setIsRegistering] = useState(false);
+  const [registerSuccess, setRegisterSuccess] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [masterResumeId, setMasterResumeId] = useState<string | null>(null);
   const [masterResumes, setMasterResumes] = useState<ResumeListItem[]>([]);
@@ -81,6 +86,8 @@ export default function TailorPage() {
     resumeId: string;
     description: string;
     postingUrl: string;
+    companyName: string;
+    jobTitle: string;
   } | null>(null);
 
   /** Past tailored resumes for selected master + fetched JD text (for keyword comparison). */
@@ -146,56 +153,45 @@ export default function TailorPage() {
     return () => window.clearTimeout(id);
   }, [jobDescription]);
 
-  useEffect(() => {
+  const reloadPastTailoredData = useCallback(async () => {
     if (!masterResumeId) {
       setPastTailoredForMaster([]);
       setJdContentByResumeId({});
       return;
     }
-
-    let cancelled = false;
-
-    const loadPastJds = async () => {
-      setJdCompareLoading(true);
-      try {
-        let list = getResumeListCache();
-        if (!list) {
-          list = await fetchResumeList(true);
-          if (cancelled) return;
-          setResumeListCache(list);
-        }
-        if (cancelled) return;
-        const related = list.filter((r) => !r.is_master && r.parent_id === masterResumeId);
-        setPastTailoredForMaster(related);
-
-        let jdMap: Record<string, { job_id: string; content: string }> = {};
-        try {
-          jdMap = await fetchJobDescriptionsByParent(masterResumeId);
-        } catch (e) {
-          console.error('Batch job description load failed', e);
-        }
-        if (cancelled) return;
-        const contentById: Record<string, string> = {};
-        for (const r of related) {
-          contentById[r.resume_id] = jdMap[r.resume_id]?.content ?? '';
-        }
-        setJdContentByResumeId(contentById);
-      } catch (e) {
-        console.error('Failed to load past job descriptions for comparison', e);
-        if (!cancelled) {
-          setPastTailoredForMaster([]);
-          setJdContentByResumeId({});
-        }
-      } finally {
-        if (!cancelled) setJdCompareLoading(false);
+    setJdCompareLoading(true);
+    try {
+      let list = getResumeListCache();
+      if (!list) {
+        list = await fetchResumeList(true);
+        setResumeListCache(list);
       }
-    };
+      const related = list.filter((r) => !r.is_master && r.parent_id === masterResumeId);
+      setPastTailoredForMaster(related);
 
-    loadPastJds();
-    return () => {
-      cancelled = true;
-    };
+      let jdMap: Awaited<ReturnType<typeof fetchJobDescriptionsByParent>> = {};
+      try {
+        jdMap = await fetchJobDescriptionsByParent(masterResumeId);
+      } catch (e) {
+        console.error('Batch job description load failed', e);
+      }
+      const contentById: Record<string, string> = {};
+      for (const r of related) {
+        contentById[r.resume_id] = jdMap[r.resume_id]?.content ?? '';
+      }
+      setJdContentByResumeId(contentById);
+    } catch (e) {
+      console.error('Failed to load past job descriptions for comparison', e);
+      setPastTailoredForMaster([]);
+      setJdContentByResumeId({});
+    } finally {
+      setJdCompareLoading(false);
+    }
   }, [masterResumeId]);
+
+  useEffect(() => {
+    reloadPastTailoredData();
+  }, [reloadPastTailoredData]);
 
   useEffect(() => {
     let cancelled = false;
@@ -333,12 +329,18 @@ export default function TailorPage() {
 
         const fullTitle = item.title || item.filename || '';
         const parsedFromResume = parseTitleAndCompany(fullTitle);
+        const pastJobTitle =
+          (item.job_job_title || '').trim() ||
+          (parsedFromResume.jobTitle === '—' ? '' : parsedFromResume.jobTitle);
+        const pastCompany =
+          (item.job_company_name || '').trim() ||
+          (parsedFromResume.company === '—' ? '' : parsedFromResume.company);
 
         let matches = currentPasteMatchesPastRole(
           normalizedDescription,
           extracted,
-          parsedFromResume.jobTitle === '—' ? '' : parsedFromResume.jobTitle,
-          parsedFromResume.company === '—' ? '' : parsedFromResume.company
+          pastJobTitle,
+          pastCompany
         );
 
         if (!matches && hasStoredJd) {
@@ -540,7 +542,14 @@ export default function TailorPage() {
     }
   };
 
+  const getCompanyValidationError = () => {
+    if (!companyName.trim()) return t('tailor.errors.companyNameRequired');
+    return null;
+  };
+
   const getGenerateValidationError = (trimmedDescription: string) => {
+    const companyError = getCompanyValidationError();
+    if (companyError) return companyError;
     if (!trimmedDescription) return null;
     if (trimmedDescription.length < 50) {
       return t('tailor.errors.jobDescriptionTooShort');
@@ -548,15 +557,25 @@ export default function TailorPage() {
     return null;
   };
 
-  const runGenerate = async (resumeId: string, description: string, postingUrl: string) => {
+  const runGenerate = async (
+    resumeId: string,
+    description: string,
+    postingUrl: string,
+    registeredCompany: string,
+    registeredJobTitle: string
+  ) => {
     try {
       // 1. Upload Job Description
       // The API expects an array of strings
       const trimmedUrl = postingUrl.trim();
+      const trimmedCompany = registeredCompany.trim();
+      const trimmedJobTitle = registeredJobTitle.trim();
       const jobId = await uploadJobDescriptions(
         [description],
         resumeId,
-        trimmedUrl ? [trimmedUrl] : undefined
+        trimmedUrl ? [trimmedUrl] : undefined,
+        [trimmedCompany],
+        trimmedJobTitle ? [trimmedJobTitle] : undefined
       );
       incrementJobs(); // Update cached counter
 
@@ -601,6 +620,36 @@ export default function TailorPage() {
     }
   };
 
+  const handleRegisterApplication = async () => {
+    if (!masterResumeId) return;
+    const companyError = getCompanyValidationError();
+    if (companyError) {
+      setError(companyError);
+      return;
+    }
+    setIsRegistering(true);
+    setError(null);
+    setRegisterSuccess(null);
+    try {
+      await registerJobApplication({
+        resumeId: masterResumeId,
+        companyName: companyName.trim(),
+        jobTitle: jobTitle.trim() || undefined,
+        content: jobDescription.trim() || undefined,
+        sourceUrl: jobPostingUrl.trim() || undefined,
+      });
+      incrementJobs();
+      clearResumeListCache();
+      await reloadPastTailoredData();
+      setRegisterSuccess(t('tailor.registerApplicationSuccess'));
+    } catch (err) {
+      console.error(err);
+      setError(t('tailor.errors.failedToRegister'));
+    } finally {
+      setIsRegistering(false);
+    }
+  };
+
   const handleGenerate = async () => {
     const trimmedDescription = jobDescription.trim();
     if (!trimmedDescription || !masterResumeId) return;
@@ -611,8 +660,11 @@ export default function TailorPage() {
     }
     const resumeId = masterResumeId;
     const trimmedUrl = jobPostingUrl.trim();
+    const trimmedCompany = companyName.trim();
+    const trimmedJobTitle = jobTitle.trim();
     setIsLoading(true);
     setError(null);
+    setRegisterSuccess(null);
     try {
       const duplicate = await findDuplicateResume(resumeId, trimmedDescription, trimmedUrl);
       if (duplicate) {
@@ -620,12 +672,14 @@ export default function TailorPage() {
           resumeId,
           description: trimmedDescription,
           postingUrl: trimmedUrl,
+          companyName: trimmedCompany,
+          jobTitle: trimmedJobTitle,
         });
         setDuplicateInfo(duplicate);
         setShowDuplicateDialog(true);
         return;
       }
-      await runGenerate(resumeId, trimmedDescription, trimmedUrl);
+      await runGenerate(resumeId, trimmedDescription, trimmedUrl, trimmedCompany, trimmedJobTitle);
     } finally {
       setIsLoading(false);
     }
@@ -640,7 +694,9 @@ export default function TailorPage() {
       await runGenerate(
         pendingGenerate.resumeId,
         pendingGenerate.description,
-        pendingGenerate.postingUrl
+        pendingGenerate.postingUrl,
+        pendingGenerate.companyName,
+        pendingGenerate.jobTitle
       );
     } finally {
       setPendingGenerate(null);
@@ -724,20 +780,25 @@ export default function TailorPage() {
     const trimmedDescription = jobDescription.trim();
     if (!trimmedDescription || !masterResumeId) return;
     const validationError = getGenerateValidationError(trimmedDescription);
+    setRegisterSuccess(null);
     if (validationError) {
       setError(validationError);
       return;
     }
     const resumeId = masterResumeId;
     const trimmedUrl = jobPostingUrl.trim();
+    const trimmedCompany = companyName.trim();
+    const trimmedJobTitle = jobTitle.trim();
     setIsLoading(true);
     setError(null);
     try {
-      await runGenerate(resumeId, trimmedDescription, trimmedUrl);
+      await runGenerate(resumeId, trimmedDescription, trimmedUrl, trimmedCompany, trimmedJobTitle);
     } finally {
       setIsLoading(false);
     }
   };
+
+  const formBusy = isLoading || isRegistering;
 
   return (
     <div
@@ -811,7 +872,7 @@ export default function TailorPage() {
               }}
               label={t('tailor.masterResumeLabel')}
               description={t('tailor.masterResumeDescription')}
-              disabled={isLoading}
+              disabled={formBusy}
             />
           )}
 
@@ -849,8 +910,44 @@ export default function TailorPage() {
             }}
             label={t('tailor.promptLabel')}
             description={t('tailor.promptDescription')}
-            disabled={isLoading || promptLoading}
+            disabled={formBusy || promptLoading}
           />
+          <div className="space-y-1">
+            <label className="block font-mono text-xs font-bold uppercase text-gray-700">
+              {t('tailor.companyNameLabel')}
+            </label>
+            <Input
+              type="text"
+              autoComplete="organization"
+              placeholder={t('tailor.companyNamePlaceholder')}
+              value={companyName}
+              onChange={(e) => {
+                setCompanyName(e.target.value);
+                setRegisterSuccess(null);
+              }}
+              disabled={formBusy}
+              className="rounded-none border-2 border-black bg-[#F0F0E8] font-mono text-sm"
+            />
+            <p className="font-mono text-[11px] text-gray-600">{t('tailor.companyNameHint')}</p>
+          </div>
+          <div className="space-y-1">
+            <label className="block font-mono text-xs font-bold uppercase text-gray-700">
+              {t('tailor.jobTitleLabel')}
+            </label>
+            <Input
+              type="text"
+              autoComplete="organization-title"
+              placeholder={t('tailor.jobTitlePlaceholder')}
+              value={jobTitle}
+              onChange={(e) => {
+                setJobTitle(e.target.value);
+                setRegisterSuccess(null);
+              }}
+              disabled={formBusy}
+              className="rounded-none border-2 border-black bg-[#F0F0E8] font-mono text-sm"
+            />
+            <p className="font-mono text-[11px] text-gray-600">{t('tailor.jobTitleHint')}</p>
+          </div>
 
           <div className="space-y-1">
             <label className="block font-mono text-xs font-bold uppercase text-gray-700">
@@ -862,8 +959,11 @@ export default function TailorPage() {
               autoComplete="url"
               placeholder={t('tailor.jobPostingUrlPlaceholder')}
               value={jobPostingUrl}
-              onChange={(e) => setJobPostingUrl(e.target.value)}
-              disabled={isLoading}
+              onChange={(e) => {
+                setJobPostingUrl(e.target.value);
+                setRegisterSuccess(null);
+              }}
+              disabled={formBusy}
               className="rounded-none border-2 border-black bg-[#F0F0E8] font-mono text-sm"
             />
             <p className="font-mono text-[11px] text-gray-600">{t('tailor.jobPostingUrlHint')}</p>
@@ -874,9 +974,12 @@ export default function TailorPage() {
               placeholder={t('tailor.jobDescriptionPlaceholder')}
               className="min-h-[300px] font-mono text-sm bg-[#F0F0E8] border-2 border-black focus:ring-0 focus:border-blue-700 resize-none p-4 rounded-none"
               value={jobDescription}
-              onChange={(e) => setJobDescription(e.target.value)}
+              onChange={(e) => {
+                setJobDescription(e.target.value);
+                setRegisterSuccess(null);
+              }}
               onKeyDown={handleTextareaKeyDown}
-              disabled={isLoading}
+              disabled={formBusy}
             />
             <div className="absolute bottom-2 right-2 text-xs font-mono text-gray-400 pointer-events-none">
               {t('tailor.charactersCount', { count: jobDescription.length })}
@@ -967,6 +1070,12 @@ export default function TailorPage() {
             </div>
           )}
 
+          {registerSuccess && (
+            <div className="p-4 bg-emerald-50 border border-emerald-200 text-emerald-800 text-sm font-mono flex items-center gap-2">
+              <span>✓</span> {registerSuccess}
+            </div>
+          )}
+
           {error && (
             <div className="p-4 bg-red-50 border border-red-200 text-red-700 text-sm font-mono flex items-center gap-2">
               <span>!</span> {error}
@@ -974,12 +1083,31 @@ export default function TailorPage() {
           )}
 
           <Button
+            type="button"
+            variant="outline"
+            size="lg"
+            onClick={handleRegisterApplication}
+            disabled={formBusy || statusLoading || !masterResumeId || !companyName.trim()}
+            className="w-full"
+          >
+            {isRegistering ? (
+              <>
+                <Loader2 className="w-5 h-5 animate-spin" />
+                {t('common.processing')}
+              </>
+            ) : (
+              t('tailor.registerApplication')
+            )}
+          </Button>
+
+          <Button
             size="lg"
             onClick={handleGenerate}
             disabled={
-              isLoading ||
+              formBusy ||
               statusLoading ||
               !masterResumeId ||
+              !companyName.trim() ||
               !jobDescription.trim() ||
               !isLlmConfigured
             }

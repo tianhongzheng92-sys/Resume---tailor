@@ -580,6 +580,10 @@ class ResumeSummary(BaseModel):
     title: str | None = None
     # Job posting page URL (tailored resumes only), from linked job record
     job_source_url: str | None = None
+    # Employer name from tailor form (not parsed from JD)
+    job_company_name: str | None = None
+    # Role title from tailor form (not parsed from JD)
+    job_job_title: str | None = None
 
 
 class ResumeListResponse(BaseModel):
@@ -596,6 +600,8 @@ class TailoredResumeJobDescription(BaseModel):
     job_id: str = ""
     content: str = ""
     source_url: str | None = None
+    company_name: str | None = None
+    job_title: str | None = None
 
 
 class TailoredJobDescriptionsByParentResponse(BaseModel):
@@ -615,6 +621,14 @@ class JobUploadRequest(BaseModel):
         description="Optional posting URLs; must match job_descriptions length when set.",
     )
     resume_id: str | None = None
+    company_names: list[str | None] | None = Field(
+        default=None,
+        description="Optional company names; must match job_descriptions length when set.",
+    )
+    job_titles: list[str | None] | None = Field(
+        default=None,
+        description="Optional job titles; must match job_descriptions length when set.",
+    )
 
     @model_validator(mode="after")
     def _source_urls_length_matches(self) -> "JobUploadRequest":
@@ -626,6 +640,36 @@ class JobUploadRequest(BaseModel):
             )
         return self
 
+    @model_validator(mode="after")
+    def _company_names_length_matches(self) -> "JobUploadRequest":
+        if self.company_names is None:
+            return self
+        if len(self.company_names) != len(self.job_descriptions):
+            raise ValueError(
+                "company_names must be the same length as job_descriptions when provided"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _job_titles_length_matches(self) -> "JobUploadRequest":
+        if self.job_titles is None:
+            return self
+        if len(self.job_titles) != len(self.job_descriptions):
+            raise ValueError(
+                "job_titles must be the same length as job_descriptions when provided"
+            )
+        return self
+
+
+class JobRegisterRequest(BaseModel):
+    """Register a job application (metadata only, no resume generation)."""
+
+    resume_id: str
+    company_name: str = Field(min_length=1)
+    job_title: str = ""
+    content: str = ""
+    source_url: str | None = None
+
 
 class JobUploadResponse(BaseModel):
     """Response for job upload."""
@@ -633,6 +677,24 @@ class JobUploadResponse(BaseModel):
     message: str
     job_id: list[str]
     request: dict[str, Any]
+
+
+class RegisteredApplicationSummary(BaseModel):
+    """Job application saved without a tailored resume."""
+
+    job_id: str
+    master_resume_id: str
+    company_name: str | None = None
+    job_title: str | None = None
+    source_url: str | None = None
+    created_at: str = ""
+
+
+class RegisteredApplicationsListResponse(BaseModel):
+    """List of register-only applications."""
+
+    request_id: str
+    data: list[RegisteredApplicationSummary]
 
 
 # Improvement Models
