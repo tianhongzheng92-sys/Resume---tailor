@@ -687,6 +687,7 @@ class RegisteredApplicationSummary(BaseModel):
     company_name: str | None = None
     job_title: str | None = None
     source_url: str | None = None
+    content: str = ""
     created_at: str = ""
 
 

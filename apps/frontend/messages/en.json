@@ -615,16 +615,18 @@
       "continueLabel": "Continue"
     },
     "jdCompare": {
-      "title": "Same role vs past applications",
-      "hint": "Matches past applications by job title and company parsed from your pasted JD (not the company name field above). Use a line like “Senior Engineer @ Acme” or labeled Title / Company fields. Keyword stats compare your pasted JD to the saved posting when available.",
+      "title": "Same role vs saved applications",
+      "hint": "Compares your pasted JD to applications saved with “Save application only” (job title and company from those forms, plus JD text when saved). Role match also uses title/company parsed from your paste. Does not use tailored resumes.",
       "comparingAs": "Matching as: {title} @ {company}",
       "pasteMore": "Paste at least 30 characters to see matches.",
-      "loading": "Loading saved job descriptions…",
-      "noMatchingRole": "No past tailored resume matches this job title and company. Check spelling, or add an explicit title and company to your paste.",
-      "noSavedJdFootnote": "Some entries have no saved job text (older data); title/company still matched from the resume name.",
+      "loading": "Loading saved applications…",
+      "noSavedApplications": "No “Save application only” entries for this master resume yet.",
+      "noMatchingRole": "No saved application matches this role. Check spelling, or add an explicit title and company to your paste.",
+      "noSavedJdFootnote": "Some saved applications have no job description text yet; title and company from the form still count.",
       "keywordsUnavailable": "Keyword overlap: — (no saved JD)",
       "rowCreated": "Created",
       "roleMatchBadge": "Title & company match",
+      "registeredOnlyBadge": "Application only",
       "matchRate": "Keywords",
       "matchedOfTotal": "{matched} / {total} keywords",
       "jaccard": "Similarity (Jaccard): {percent}%"

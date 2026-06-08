@@ -139,6 +139,8 @@ async def list_registered_applications(
         company_name = cn.strip() if isinstance(cn, str) and cn.strip() else None
         jt = job.get("job_title")
         job_title = jt.strip() if isinstance(jt, str) and jt.strip() else None
+        raw_content = job.get("content")
+        content = raw_content.strip() if isinstance(raw_content, str) else ""
         summaries.append(
             RegisteredApplicationSummary(
                 job_id=job.get("job_id", ""),
@@ -146,6 +148,7 @@ async def list_registered_applications(
                 company_name=company_name,
                 job_title=job_title,
                 source_url=source_url,
+                content=content,
                 created_at=job.get("created_at", ""),
             )
         )

@@ -15,14 +15,16 @@ import {
   previewImproveResume,
   confirmImproveResume,
   fetchResumeList,
+  fetchRegisteredApplications,
   fetchJobDescriptionsByParent,
+  isStoredJobDescriptionContent,
 } from '@/lib/api/resume';
 import {
   clearResumeListCache,
   getResumeListCache,
   setResumeListCache,
 } from '@/lib/resume-list-cache';
-import type { ResumeListItem } from '@/lib/api/resume';
+import type { ResumeListItem, RegisteredApplicationItem } from '@/lib/api/resume';
 import { fetchPromptConfig, type PromptOption } from '@/lib/api/config';
 import { Dropdown } from '@/components/ui/dropdown';
 import { useStatusCache } from '@/lib/context/status-cache';
@@ -90,9 +92,10 @@ export default function TailorPage() {
     jobTitle: string;
   } | null>(null);
 
-  /** Past tailored resumes for selected master + fetched JD text (for keyword comparison). */
-  const [pastTailoredForMaster, setPastTailoredForMaster] = useState<ResumeListItem[]>([]);
-  const [jdContentByResumeId, setJdContentByResumeId] = useState<Record<string, string>>({});
+  /** Register-only applications for selected master (JD / role comparison). */
+  const [registeredApplicationsForMaster, setRegisteredApplicationsForMaster] = useState<
+    RegisteredApplicationItem[]
+  >([]);
   const [jdCompareLoading, setJdCompareLoading] = useState(false);
   const [debouncedJobDescription, setDebouncedJobDescription] = useState('');
 
@@ -153,45 +156,26 @@ export default function TailorPage() {
     return () => window.clearTimeout(id);
   }, [jobDescription]);
 
-  const reloadPastTailoredData = useCallback(async () => {
+  const reloadRegisteredApplicationsForCompare = useCallback(async () => {
     if (!masterResumeId) {
-      setPastTailoredForMaster([]);
-      setJdContentByResumeId({});
+      setRegisteredApplicationsForMaster([]);
       return;
     }
     setJdCompareLoading(true);
     try {
-      let list = getResumeListCache();
-      if (!list) {
-        list = await fetchResumeList(true);
-        setResumeListCache(list);
-      }
-      const related = list.filter((r) => !r.is_master && r.parent_id === masterResumeId);
-      setPastTailoredForMaster(related);
-
-      let jdMap: Awaited<ReturnType<typeof fetchJobDescriptionsByParent>> = {};
-      try {
-        jdMap = await fetchJobDescriptionsByParent(masterResumeId);
-      } catch (e) {
-        console.error('Batch job description load failed', e);
-      }
-      const contentById: Record<string, string> = {};
-      for (const r of related) {
-        contentById[r.resume_id] = jdMap[r.resume_id]?.content ?? '';
-      }
-      setJdContentByResumeId(contentById);
+      const apps = await fetchRegisteredApplications(masterResumeId);
+      setRegisteredApplicationsForMaster(apps);
     } catch (e) {
-      console.error('Failed to load past job descriptions for comparison', e);
-      setPastTailoredForMaster([]);
-      setJdContentByResumeId({});
+      console.error('Failed to load saved applications for comparison', e);
+      setRegisteredApplicationsForMaster([]);
     } finally {
       setJdCompareLoading(false);
     }
   }, [masterResumeId]);
 
   useEffect(() => {
-    reloadPastTailoredData();
-  }, [reloadPastTailoredData]);
+    reloadRegisteredApplicationsForCompare();
+  }, [reloadRegisteredApplicationsForCompare]);
 
   useEffect(() => {
     let cancelled = false;
@@ -308,33 +292,29 @@ export default function TailorPage() {
     return normalizedDescription.includes(nt) && normalizedDescription.includes(nc);
   };
 
+  const labelForRegisteredApplication = (app: RegisteredApplicationItem) => {
+    const title = (app.job_title || '').trim();
+    const company = (app.company_name || '').trim();
+    if (title && company) return `${title} @ ${company}`;
+    if (title) return title;
+    if (company) return company;
+    return app.job_id.slice(0, 8);
+  };
+
   const jdComparisonRows = useMemo(() => {
     const trimmed = debouncedJobDescription.trim();
-    if (trimmed.length < 30 || pastTailoredForMaster.length === 0) return [];
+    if (trimmed.length < 30 || registeredApplicationsForMaster.length === 0) return [];
 
     const normalizedDescription = normalizeText(trimmed);
     const extracted = extractTitleCompanyFromDescription(trimmed);
 
-    const labelFor = (item: ResumeListItem) => {
-      const full = item.title || item.filename || item.resume_id.slice(0, 8);
-      const { jobTitle, company } = parseTitleAndCompany(full);
-      if (jobTitle !== '—' && company !== '—') return `${jobTitle} @ ${company}`;
-      return full;
-    };
+    const rows = registeredApplicationsForMaster
+      .map((app) => {
+        const storedJd = app.content ?? '';
+        const hasStoredJd = isStoredJobDescriptionContent(storedJd);
 
-    const rows = pastTailoredForMaster
-      .map((item) => {
-        const storedJd = jdContentByResumeId[item.resume_id] ?? '';
-        const hasStoredJd = Boolean(storedJd.trim());
-
-        const fullTitle = item.title || item.filename || '';
-        const parsedFromResume = parseTitleAndCompany(fullTitle);
-        const pastJobTitle =
-          (item.job_job_title || '').trim() ||
-          (parsedFromResume.jobTitle === '—' ? '' : parsedFromResume.jobTitle);
-        const pastCompany =
-          (item.job_company_name || '').trim() ||
-          (parsedFromResume.company === '—' ? '' : parsedFromResume.company);
+        const pastJobTitle = (app.job_title || '').trim();
+        const pastCompany = (app.company_name || '').trim();
 
         let matches = currentPasteMatchesPastRole(
           normalizedDescription,
@@ -370,9 +350,9 @@ export default function TailorPage() {
               };
 
         return {
-          resumeId: item.resume_id,
-          label: labelFor(item),
-          createdAt: item.created_at,
+          jobId: app.job_id,
+          label: labelForRegisteredApplication(app),
+          createdAt: app.created_at,
           hasStoredJd,
           ...overlap,
         };
@@ -384,8 +364,8 @@ export default function TailorPage() {
       });
 
     return rows.slice(0, 12);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- currentPasteMatchesPastRole / extract helpers are pure; full deps would recompute every render
-  }, [debouncedJobDescription, pastTailoredForMaster, jdContentByResumeId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- helpers are pure
+  }, [debouncedJobDescription, registeredApplicationsForMaster]);
 
   const jdCompareDetectedRole = useMemo(() => {
     const ex = extractTitleCompanyFromDescription(debouncedJobDescription.trim());
@@ -407,27 +387,64 @@ export default function TailorPage() {
     description: string,
     postingUrlRaw: string
   ) => {
+    let registeredApps: RegisteredApplicationItem[] = [];
+    try {
+      registeredApps = await fetchRegisteredApplications(resumeId);
+    } catch (e) {
+      console.warn('Duplicate check: could not load saved applications', e);
+    }
+
     let list = getResumeListCache();
     if (!list) {
       list = await fetchResumeList(true);
       setResumeListCache(list);
     }
     const relatedTailored = list.filter((item) => !item.is_master && item.parent_id === resumeId);
-    if (relatedTailored.length === 0) return null;
+    if (registeredApps.length === 0 && relatedTailored.length === 0) return null;
 
     const normalizedDescription = normalizeText(description);
+    const sortByCreated = <T extends { created_at?: string }>(items: T[]) =>
+      [...items].sort(
+        (a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()
+      );
 
-    // 1) Posting URL (normalized) — strongest signal
+    const duplicateFromRegistered = (
+      app: RegisteredApplicationItem,
+      extra?: Partial<{
+        duplicateByUrl: boolean;
+        matchedUrl: string;
+        duplicateByJd: boolean;
+      }>
+    ) => ({
+      resumeId: '',
+      jobTitle: (app.job_title || '').trim() || '—',
+      company: (app.company_name || '').trim() || '—',
+      createdAt: formatDateTime(app.created_at || ''),
+      registeredOnly: true as const,
+      ...extra,
+    });
+
+    // 1) Posting URL — saved applications first, then tailored resumes
     const normIncomingUrl = normalizeJobPostingUrl(postingUrlRaw);
     if (normIncomingUrl) {
+      const regUrlDup = sortByCreated(registeredApps).find((app) => {
+        const stored = app.source_url;
+        if (!stored?.trim()) return false;
+        return normalizeJobPostingUrl(stored) === normIncomingUrl;
+      });
+      if (regUrlDup) {
+        return duplicateFromRegistered(regUrlDup, {
+          duplicateByUrl: true,
+          matchedUrl: regUrlDup.source_url?.trim() || postingUrlRaw.trim(),
+        });
+      }
+
       const urlMatches = relatedTailored.filter((item) => {
         const stored = item.job_source_url;
         if (!stored?.trim()) return false;
         return normalizeJobPostingUrl(stored) === normIncomingUrl;
       });
-      const urlDup = [...urlMatches].sort(
-        (a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()
-      )[0];
+      const urlDup = sortByCreated(urlMatches)[0];
       if (urlDup) {
         const fullTitle = urlDup.title || urlDup.filename || '';
         const { jobTitle, company } = parseTitleAndCompany(fullTitle);
@@ -442,19 +459,23 @@ export default function TailorPage() {
       }
     }
 
-    // 2) Full job description text vs stored JD for this master
+    // 2) Full JD text — saved applications, then tailored
     if (normalizedDescription) {
+      const regJdDup = sortByCreated(registeredApps).find((app) => {
+        if (!isStoredJobDescriptionContent(app.content)) return false;
+        return jdTextsAreDuplicate(normalizedDescription, normalizeText(app.content));
+      });
+      if (regJdDup) {
+        return duplicateFromRegistered(regJdDup, { duplicateByJd: true });
+      }
+
       try {
         const jdMap = await fetchJobDescriptionsByParent(resumeId);
-        const jdDup = [...relatedTailored]
-          .sort((a, b) => {
-            return new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime();
-          })
-          .find((item) => {
-            const stored = jdMap[item.resume_id]?.content;
-            if (!stored?.trim()) return false;
-            return jdTextsAreDuplicate(normalizedDescription, normalizeText(stored));
-          });
+        const jdDup = sortByCreated(relatedTailored).find((item) => {
+          const stored = jdMap[item.resume_id]?.content;
+          if (!stored?.trim()) return false;
+          return jdTextsAreDuplicate(normalizedDescription, normalizeText(stored));
+        });
         if (jdDup) {
           const fullTitle = jdDup.title || jdDup.filename || '';
           const { jobTitle, company } = parseTitleAndCompany(fullTitle);
@@ -467,27 +488,43 @@ export default function TailorPage() {
           };
         }
       } catch (e) {
-        console.warn('Duplicate check: could not load stored job descriptions', e);
+        console.warn('Duplicate check: could not load tailored job descriptions', e);
       }
     }
 
-    // 3) Heuristic: title/company extracted from paste vs resume title
+    // 3) Role from pasted JD vs saved application title/company, then tailored resume names
     if (!normalizedDescription) return null;
 
     const extracted = extractTitleCompanyFromDescription(description);
+    const regRoleDup = sortByCreated(registeredApps).find((app) =>
+      currentPasteMatchesPastRole(
+        normalizedDescription,
+        extracted,
+        (app.job_title || '').trim(),
+        (app.company_name || '').trim()
+      )
+    );
+    if (regRoleDup) {
+      return duplicateFromRegistered(regRoleDup);
+    }
+
     const matches = relatedTailored.filter((item) => {
       const fullTitle = item.title || item.filename || '';
-      const { jobTitle, company } = parseTitleAndCompany(fullTitle);
+      const parsed = parseTitleAndCompany(fullTitle);
+      const pastJobTitle =
+        (item.job_job_title || '').trim() ||
+        (parsed.jobTitle === '—' ? '' : parsed.jobTitle);
+      const pastCompany =
+        (item.job_company_name || '').trim() ||
+        (parsed.company === '—' ? '' : parsed.company);
       return currentPasteMatchesPastRole(
         normalizedDescription,
         extracted,
-        jobTitle === '—' ? '' : jobTitle,
-        company === '—' ? '' : company
+        pastJobTitle,
+        pastCompany
       );
     });
-    const duplicated = [...matches].sort(
-      (a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()
-    )[0];
+    const duplicated = sortByCreated(matches)[0];
     if (!duplicated) return null;
     const fullTitle = duplicated.title || duplicated.filename || '';
     const { jobTitle, company } = parseTitleAndCompany(fullTitle);
@@ -640,7 +677,7 @@ export default function TailorPage() {
       });
       incrementJobs();
       clearResumeListCache();
-      await reloadPastTailoredData();
+      await reloadRegisteredApplicationsForCompare();
       setRegisterSuccess(t('tailor.registerApplicationSuccess'));
     } catch (err) {
       console.error(err);
@@ -986,7 +1023,7 @@ export default function TailorPage() {
             </div>
           </div>
 
-          {pastTailoredForMaster.length > 0 && (
+          {masterResumeId && (
             <div className="border-2 border-black bg-[#F0F0E8] p-4 shadow-[4px_4px_0px_0px_rgba(0,0,0,0.08)]">
               <h3 className="font-mono text-xs font-bold uppercase tracking-wider text-gray-800 mb-1">
                 {t('tailor.jdCompare.title')}
@@ -1009,29 +1046,35 @@ export default function TailorPage() {
                 </div>
               ) : debouncedJobDescription.trim().length < 30 ? (
                 <p className="font-mono text-xs text-gray-500">{t('tailor.jdCompare.pasteMore')}</p>
+              ) : registeredApplicationsForMaster.length === 0 ? (
+                <p className="font-mono text-xs text-gray-500">
+                  {t('tailor.jdCompare.noSavedApplications')}
+                </p>
               ) : jdComparisonRows.length === 0 ? (
                 <div className="space-y-2">
                   <p className="font-mono text-xs text-gray-500">
                     {t('tailor.jdCompare.noMatchingRole')}
                   </p>
-                  {Object.values(jdContentByResumeId).every((c) => !c?.trim()) && (
-                    <p className="font-mono text-[10px] text-gray-400">
-                      {t('tailor.jdCompare.noSavedJdFootnote')}
-                    </p>
-                  )}
+                  {registeredApplicationsForMaster.length > 0 &&
+                    registeredApplicationsForMaster.every(
+                      (app) => !isStoredJobDescriptionContent(app.content)
+                    ) && (
+                      <p className="font-mono text-[10px] text-gray-400">
+                        {t('tailor.jdCompare.noSavedJdFootnote')}
+                      </p>
+                    )}
                 </div>
               ) : (
                 <ul className="space-y-0 border border-black divide-y divide-gray-300 bg-white">
                   {jdComparisonRows.map((row) => (
-                    <li key={row.resumeId}>
-                      <button
-                        type="button"
-                        className="w-full text-left px-3 py-2.5 hover:bg-blue-50/60 transition-colors flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2"
-                        onClick={() => router.push(`/resumes/${row.resumeId}`)}
-                      >
+                    <li key={row.jobId}>
+                      <div className="w-full text-left px-3 py-2.5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 bg-amber-50/30">
                         <div className="min-w-0">
                           <div className="font-mono text-xs font-bold text-gray-900 truncate">
                             {row.label}
+                          </div>
+                          <div className="font-mono text-[10px] text-amber-800 uppercase mt-0.5">
+                            {t('tailor.jdCompare.registeredOnlyBadge')}
                           </div>
                           <div className="font-mono text-[10px] text-emerald-800 uppercase mt-0.5">
                             {t('tailor.jdCompare.roleMatchBadge')}
@@ -1062,7 +1105,7 @@ export default function TailorPage() {
                             </span>
                           )}
                         </div>
-                      </button>
+                      </div>
                     </li>
                   ))}
                 </ul>

@@ -209,7 +209,17 @@ export interface RegisteredApplicationItem {
   company_name: string | null;
   job_title: string | null;
   source_url: string | null;
+  content: string;
   created_at: string;
+}
+
+/** Placeholder JD stored for register-only applications without pasted text. */
+export const REGISTER_ONLY_JD_PLACEHOLDER =
+  '(Application registered — add job description before tailoring)';
+
+export function isStoredJobDescriptionContent(content: string | null | undefined): boolean {
+  const trimmed = (content || '').trim();
+  return Boolean(trimmed) && trimmed !== REGISTER_ONLY_JD_PLACEHOLDER;
 }
 
 /** Jobs saved without a tailored resume (register-only or not yet generated). */
